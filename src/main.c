@@ -9,38 +9,108 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <termios.h>
+#include <errno.h>
 
 #include "shaders.h"
 
 #define CMUCAM_IMAGE_WIDTH 80
 #define CMUCAM_IMAGE_HEIGHT 143
 
-int cmucam_wait(int fd) {
-    uint8_t byte = 0;
+int cmucam_readbyte(int fd) {
+    uint8_t b = 0;
+    int rc = 0;
     do {
-        fsync(fd);
-        int rc = read(fd, &byte, 1);
+        rc = read(fd, &b, 1);
         if (rc < 0) {
-            fprintf(stderr, "failed to read from CMUcam - %d\n", rc);
+            perror("failed to read from CMUcam");
             return rc;
-        } else if (rc > 0) {
-            // sanitize byte
-            char c = (byte > 31 && byte < 127) ? byte : '.';
-            fprintf(stderr, "got byte: %u (%c)\n", byte, c);
         }
-    } while (byte != ':');
+    } while (rc != 1);
+    return b;
+}
+
+int cmucam_wait(int fd) {
+    int rc = 0;
+    fsync(fd);
+    do {
+        rc = cmucam_readbyte(fd);
+        if (rc < 0) {
+            perror("failed to read from CMUcam");
+            return rc;
+        }
+
+        // sanitize byte for printing
+        char c = (rc > 31 && rc < 127) ? rc : '.';
+        printf("got byte: %u (%c)\n", rc, c);
+    } while (rc != ':');
     return 0;
 }
 
 int cmucam_exit_raw_mode(int fd) {
-    const char cmucam_reset_cmd[] = {'R', 'M', 1, 0};
-    int rc = write(fd, cmucam_reset_cmd, 4);
-    if (rc < 0) {
-        fprintf(stderr, "failed to write to CMUcam - %d\n", rc);
+    const uint8_t cmucam_reset_cmd_raw[] = {'R', 'M', 1, 0};
+    int rc = write(fd, cmucam_reset_cmd_raw, 4);
+    if (rc < 0 || rc != 4) {
+        perror("failed to write to CMUcam");
         return rc;
     }
 
     return cmucam_wait(fd);
+}
+
+int cmucam_dump_frame(int fd) {
+    const uint8_t cmucam_dumpframe_cmd_raw[] = {'D', 'F', 0};
+    int rc = write(fd, &cmucam_dumpframe_cmd_raw, 3);
+    if (rc < 0 || rc != 3) {
+        perror("failed to write to CMUcam");
+        return rc;
+    }
+}
+
+int cmucam_dump_frame_get_column(int fd, uint8_t* column) {
+    int rc = cmucam_readbyte(fd);
+    if (rc < 0) {
+        return rc;
+    }
+
+#define CMUCAM_DF_START_OF_FRAME 1
+#define CMUCAM_DF_START_OF_COLUMN 2
+#define CMUCAM_DF_END_OF_FRAME 3
+
+    size_t received = 0;
+    if (rc == CMUCAM_DF_START_OF_FRAME) {
+        // start of frame, no action
+    } else if (rc == CMUCAM_DF_START_OF_COLUMN) {
+        // new column, but we have to check for end-of-frame
+        rc = cmucam_readbyte(fd);
+        if (rc == CMUCAM_DF_END_OF_FRAME) {
+            // end of frame, sync with camera shell
+            rc = cmucam_wait(fd);
+            if (rc < 0) {
+                return rc;
+            }
+            return 1;
+        } else {
+            // otherwise we've just received the first byte of the column
+            column[0] = rc;
+            received = 1;
+        }
+    } else {
+        // we're out of sync with the camera
+        return -EIO;
+    }
+
+    // wait for the column from the camera
+    const size_t column_size = CMUCAM_IMAGE_HEIGHT * 3;
+    do {
+        rc = read(fd, column + received, column_size - received);
+        if (rc < 0) {
+            perror("failed to read from CMUcam");
+            return rc;
+        }
+
+        received += rc;
+    } while (received != column_size);
+    return 0;
 }
 
 int cmucam_open(const char* path) {
@@ -89,7 +159,7 @@ int cmucam_open(const char* path) {
 
     rc = tcsetattr(fd, TCSANOW, &attrs);
     if (rc < 0) {
-        fprintf(stderr, "failed to set termios attributes - %d\n", rc);
+        perror("failed to set termios attributes");
         return rc;
     }
 
@@ -226,66 +296,46 @@ int main(int argc, char** argv) {
     SDL_ShowWindow(window);
     
     // Start CMUcam image dump
-    const char cmucam_dumpframe_cmd[] = {'D', 'F', 0};
-    rc = write(cmucam, &cmucam_dumpframe_cmd, 3);
-    if (rc < 0 || rc != 3) {
-        fprintf(stderr, "failed to write to CMUcam - %d\n", rc);
-        return EXIT_FAILURE;
+    rc = cmucam_dump_frame(cmucam);
+    if (rc < 0) {
+        return rc;
     }
-    
+
     // Draw CMUcam image until exit is requested
     uint8_t image[CMUCAM_IMAGE_HEIGHT * CMUCAM_IMAGE_WIDTH * 3];
-    GLint x = 0;
-    GLint y = 0;
-    GLint c = 0;
+    GLint column = 0;
     bool quit = false;
 
     while (true) {
-        // fetch a byte from the camera
-        uint8_t b = 0;
-        rc = 0;
-        do {
-            rc = read(cmucam, &b, 1);
-            if (rc < 0) {
-                fprintf(stderr, "failed to read from CMUcam (1) - %d\n", rc);
-                return EXIT_FAILURE;
-            }
-        } while (rc != 1);
+        // Fetch the next column from the camera
+        uint8_t column_data[CMUCAM_IMAGE_HEIGHT * 3];
+        rc = cmucam_dump_frame_get_column(cmucam, column_data);
+        if (rc < 0) {
+            fprintf(stderr, "failed to get next column from CMUcam\n");
+            return EXIT_FAILURE;
+        }
 
-        if (b == 1) {
-            // new frame
-            x = 0;
-            y = 0;
-            c = 0;
-            //printf("column 0\n");
-            continue;
-        } else if (b == 2) {
-            x++;
-            y = 0;
-            c = 0;
-            //printf("column %d\n", x);
-        } else if (b == 3) {
-            cmucam_wait(cmucam);
+        // Start next image dump if we hit end-of-frame
+        if (rc == 1) {
             if (quit) {
                 break;
             }
 
-            // start next frame
-            rc = write(cmucam, &cmucam_dumpframe_cmd, 3);
-            if (rc < 0 || rc != 3) {
-                fprintf(stderr, "failed to write to CMUcam - %d\n", rc);
-                return EXIT_FAILURE;
+            rc = cmucam_dump_frame(cmucam);
+            if (rc < 0) {
+                fprintf(stderr, "failed to start frame dump from CMUcam\n");
+                return rc;
             }
+
+            column = 0;
             continue;
-        } else {
-            image[3*(y*CMUCAM_IMAGE_WIDTH + x) + c] = b;
-            if (c < 2) {
-                c++;
-            } else {
-                c = 0;
-                y++;
-            }
         }
+
+        // update column in image
+        for (int i = 0; i < CMUCAM_IMAGE_HEIGHT; i++) {
+            memcpy(&image[3*(i*CMUCAM_IMAGE_WIDTH + column)], &column_data[3*i], 3);
+        }
+        column++;
 
         SDL_Event event;
         while (SDL_PollEvent(&event) != 0) {
@@ -296,6 +346,7 @@ int main(int argc, char** argv) {
         }
 
         // update texture
+        glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, frame);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, CMUCAM_IMAGE_WIDTH, CMUCAM_IMAGE_HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, image);
 
@@ -309,7 +360,6 @@ int main(int argc, char** argv) {
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(quad_shader_prog);
         glBindVertexArray(quadVAO);
-        glActiveTexture(GL_TEXTURE0);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glBindTexture(GL_TEXTURE_2D, 0);
         glBindVertexArray(0);
