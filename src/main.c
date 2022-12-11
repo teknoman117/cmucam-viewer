@@ -292,19 +292,19 @@ int main(int argc, char** argv) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    glClearColor(0, 0, 0, 1);
     SDL_GL_SetSwapInterval(0);
     SDL_ShowWindow(window);
     
-    // Start CMUcam image dump
+    // Render CMUcam frame dumps
+    uint8_t image[CMUCAM_IMAGE_HEIGHT * CMUCAM_IMAGE_WIDTH * 3] = {0};
+    GLint column = 0;
+    bool quit = false;
+
     rc = cmucam_dump_frame(cmucam);
     if (rc < 0) {
         return rc;
     }
-
-    // Draw CMUcam image until exit is requested
-    uint8_t image[CMUCAM_IMAGE_HEIGHT * CMUCAM_IMAGE_WIDTH * 3];
-    GLint column = 0;
-    bool quit = false;
 
     while (true) {
         // Fetch the next column from the camera
@@ -315,8 +315,8 @@ int main(int argc, char** argv) {
             return EXIT_FAILURE;
         }
 
-        // Start next image dump if we hit end-of-frame
         if (rc == 1) {
+            // got end-of-frame from CMUcam
             if (quit) {
                 break;
             }
@@ -331,7 +331,6 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // update column in image
         for (int i = 0; i < CMUCAM_IMAGE_HEIGHT; i++) {
             memcpy(&image[3*(i*CMUCAM_IMAGE_WIDTH + column)], &column_data[3*i], 3);
         }
@@ -340,8 +339,15 @@ int main(int argc, char** argv) {
         SDL_Event event;
         while (SDL_PollEvent(&event) != 0) {
             if (event.type == SDL_QUIT) {
-                printf("Exit requested\n");
                 quit = true;
+            } else if (event.type == SDL_WINDOWEVENT) {
+                if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
+                    // update viewport with new window size
+                    int width;
+                    int height;
+                    SDL_GetWindowSize(window, &width, &height);
+                    glViewport(0, 0, width, height);
+                }
             }
         }
 
@@ -351,18 +357,12 @@ int main(int argc, char** argv) {
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, CMUCAM_IMAGE_WIDTH, CMUCAM_IMAGE_HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, image);
 
         // redraw window
-        int width;
-        int height;
-        SDL_GetWindowSize(window, &width, &height);
-        glViewport(0, 0, width, height);
-
-        glClearColor(0, 0, 0, 1);
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(quad_shader_prog);
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        glBindTexture(GL_TEXTURE_2D, 0);
         glBindVertexArray(0);
+        glBindTexture(GL_TEXTURE_2D, 0);
         SDL_GL_SwapWindow(window);
     }
 
