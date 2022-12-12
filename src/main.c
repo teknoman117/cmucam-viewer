@@ -256,8 +256,8 @@ int main(int argc, char** argv) {
 
     const GLfloat quad[] = {
             -1.0f, -1.0f, 0.0f, 0.0f,
-            -1.0f,  1.0f, 0.0f, 1.0f,
-            1.0f, -1.0f, 1.0f, 0.0f,
+            -1.0f,  1.0f, 1.0f, 0.0f,
+            1.0f, -1.0f, 0.0f, 1.0f,
             1.0f,  1.0f, 1.0f, 1.0f,
     };
 
@@ -287,9 +287,9 @@ int main(int argc, char** argv) {
     GLuint frame;
     glGenTextures(1, &frame);
     glBindTexture(GL_TEXTURE_2D, frame);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB8, CMUCAM_IMAGE_WIDTH, CMUCAM_IMAGE_HEIGHT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB8, CMUCAM_IMAGE_HEIGHT, CMUCAM_IMAGE_WIDTH);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glClearColor(0, 0, 0, 1);
@@ -297,7 +297,6 @@ int main(int argc, char** argv) {
     SDL_ShowWindow(window);
     
     // Render CMUcam frame dumps
-    uint8_t image[CMUCAM_IMAGE_HEIGHT * CMUCAM_IMAGE_WIDTH * 3] = {0};
     GLint column = 0;
     bool quit = false;
 
@@ -331,11 +330,6 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        for (int i = 0; i < CMUCAM_IMAGE_HEIGHT; i++) {
-            memcpy(&image[3*(i*CMUCAM_IMAGE_WIDTH + column)], &column_data[3*i], 3);
-        }
-        column++;
-
         SDL_Event event;
         while (SDL_PollEvent(&event) != 0) {
             if (event.type == SDL_QUIT) {
@@ -352,9 +346,12 @@ int main(int argc, char** argv) {
         }
 
         // update texture
+        // we store the texture rotated so that the column updates from the CMUcam are sent to
+        // OpenGL as row updates, which is generally more performant.
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, frame);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, CMUCAM_IMAGE_WIDTH, CMUCAM_IMAGE_HEIGHT, GL_RGB, GL_UNSIGNED_BYTE, image);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, column, CMUCAM_IMAGE_HEIGHT, 1, GL_RGB, GL_UNSIGNED_BYTE, column_data);
+        column++;
 
         // redraw window
         glClear(GL_COLOR_BUFFER_BIT);
