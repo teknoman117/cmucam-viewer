@@ -3,6 +3,8 @@
 
 #include <SDL.h>
 
+#include <errno.h>
+#include <getopt.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -10,14 +12,75 @@
 #include "cmucam.h"
 #include "shaders.h"
 
+const char *cmucam_path = "/dev/ttyUSB0";
+unsigned int window_scale = 1;
+
+void show_help(const char* executable_path) {
+    fprintf(stderr, "Usage: %s [FLAGS] [OPTIONS] \n", executable_path);
+    fprintf(stderr, "Provides a frame viewer for a CMUcam\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "FLAGS:\n");
+    fprintf(stderr, "\t-h, --help\t\tPrints this help information\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "OPTIONS:\n");
+    fprintf(stderr, "\t-d, --device <path>\t\tSet the path to the CMUcam device [default: /dev/ttyUSB0]\n");
+    fprintf(stderr, "\t-s, --scale <scale>\t\tSet the window size to a multiple of the actual size [default: 1]\n");
+    fprintf(stderr, "\n");
+}
+
+int process_options(int argc, char** argv) {
+    const char* executable_path = argc > 0 ? argv[0] : "";
+
+    static struct option options[] = {
+        {"device", required_argument, 0, 'd'},
+        {"scale", required_argument, 0, 's'},
+        {"help", no_argument, 0, 'h'},
+        {0, 0, 0, 0}
+    };
+
+    int rc = 0;
+    int index = 0;
+    while ((rc = getopt_long(argc, argv, "d:s:h", options, &index)) != -1) {
+        switch (rc) {
+            case 'd':
+                cmucam_path = optarg;
+                break;
+            case 's':
+                if (sscanf(optarg, "%u", &window_scale) == EOF) {
+                    fprintf(stderr, "invalid argument for scale: \"%s\"", optarg);
+                    show_help(executable_path);
+                    return -EINVAL;
+                }
+                break;
+
+            case '?':
+            case 'h':
+                show_help(executable_path);
+                return -EINVAL;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
+    int rc = process_options(argc, argv);
+    if (rc < 0) {
+        return rc;
+    }
+
+    rc = cmucam_initialize();
+    if (rc < 0) {
+        return rc;
+    }
+
     int cmucam = cmucam_open("/dev/ttyUSB0");
     if (cmucam < 0) {
+        fprintf(stderr, "Failed to open CMUcam: %d\n", cmucam);
         return EXIT_FAILURE;
     }
 
     // Setup an OpenGL 4.3 rendering environment
-    int rc = SDL_Init(SDL_INIT_VIDEO);
+    rc = SDL_Init(SDL_INIT_VIDEO);
     if (rc < 0) {
         fprintf(stderr, "failed to initialize SDL with error: %s (%d)\n", SDL_GetError(), -rc);
         return EXIT_FAILURE;
@@ -31,8 +94,8 @@ int main(int argc, char** argv) {
             "CMUCam v1.12 Viewer",
             SDL_WINDOWPOS_UNDEFINED,
             SDL_WINDOWPOS_UNDEFINED,
-            CMUCAM_IMAGE_WIDTH * 2,
-            CMUCAM_IMAGE_HEIGHT,
+            CMUCAM_IMAGE_WIDTH * 2 * window_scale,
+            CMUCAM_IMAGE_HEIGHT * window_scale,
             SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE);
     if (!window) {
         fprintf(stderr, "failed to create SDL window with error: %s\n", SDL_GetError());
@@ -86,16 +149,12 @@ int main(int argc, char** argv) {
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    ret = glGetError();
-    if (ret != GL_NO_ERROR) {
-        fprintf(stderr, "there is a GL error!!! 0\n");
-    }
-
-    // use nearest filtering for integer scaling
     GLuint frame;
+    GLubyte black[3] = {0};
     glGenTextures(1, &frame);
     glBindTexture(GL_TEXTURE_2D, frame);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB8, CMUCAM_IMAGE_HEIGHT, CMUCAM_IMAGE_WIDTH);
+    glClearTexSubImage(frame, 0, 0, 0, 0, CMUCAM_IMAGE_HEIGHT, CMUCAM_IMAGE_WIDTH, 1, GL_RGB, GL_UNSIGNED_BYTE, black);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -107,31 +166,27 @@ int main(int argc, char** argv) {
     SDL_ShowWindow(window);
     
     // Render CMUcam frame dumps
-    GLint column = 0;
-    bool quit = false;
-
-    rc = cmucam_dump_frame(cmucam);
+    rc = cmucam_dumpframe(cmucam);
     if (rc < 0) {
         return rc;
     }
 
-    while (true) {
+    GLuint column = 0;
+    bool quit = false;
+    while (1) {
         // Fetch the next column from the camera
         uint8_t column_data[CMUCAM_IMAGE_HEIGHT * 3];
-        rc = cmucam_dump_frame_next_column(cmucam, column_data);
+        rc = cmucam_dumpframe_next_column(cmucam, column_data);
         if (rc < 0) {
-            fprintf(stderr, "failed to get next column from CMUcam\n");
+            fprintf(stderr, "failed to get next column from CMUcam: %d\n", rc);
             return EXIT_FAILURE;
-        }
-
-        // end-of-frame
-        if (rc == 1) {
-            // an opportunity to exit cleanly
+        } else if (rc == 1) {
+            // End-of-frame: exit or begin the next frame
             if (quit) {
                 break;
             }
 
-            rc = cmucam_dump_frame(cmucam);
+            rc = cmucam_dumpframe(cmucam);
             if (rc < 0) {
                 fprintf(stderr, "failed to start frame dump from CMUcam\n");
                 return rc;
@@ -158,6 +213,7 @@ int main(int argc, char** argv) {
         }
 
         // update texture
+        //
         // we store the texture rotated so that the column updates from the CMUcam are sent to
         // OpenGL as row updates, which is generally more performant.
         glActiveTexture(GL_TEXTURE0);
@@ -168,6 +224,7 @@ int main(int argc, char** argv) {
         // redraw window
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(quad_shader_prog);
+        glUniform1i(0, 0);
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glBindVertexArray(0);
