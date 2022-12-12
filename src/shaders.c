@@ -1,3 +1,32 @@
+/*
+ * Copyright (c) 2022 Nathan Lewis <github@nrlewis.dev>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of mosquitto nor the names of its
+ *    contributors may be used to endorse or promote products derived from
+ *    this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include <GL/glew.h>
 #include <GL/gl.h>
 
@@ -35,7 +64,7 @@ static const char *quad_shader_frag_source =
         "    color = vec4(color_in.rgb, 1);           \n"
         "}                                            \n";
 
-GLuint compileShader(const char *source, GLenum type)
+GLuint compile_shader(const char *source, GLenum type)
 {
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &source, NULL);
@@ -60,7 +89,7 @@ GLuint compileShader(const char *source, GLenum type)
     return shader;
 }
 
-GLuint linkProgram(GLuint vertex_shader, GLuint fragment_shader)
+GLuint link_program(GLuint vertex_shader, GLuint fragment_shader)
 {
     GLuint program = glCreateProgram();
 
@@ -87,18 +116,18 @@ GLuint linkProgram(GLuint vertex_shader, GLuint fragment_shader)
     return program;
 }
 
-int loadShaders() {
-    quad_shader_vert = compileShader(quad_shader_vert_source, GL_VERTEX_SHADER);
+int load_shaders() {
+    quad_shader_vert = compile_shader(quad_shader_vert_source, GL_VERTEX_SHADER);
     if (!quad_shader_vert) {
         return -1;
     }
 
-    quad_shader_frag = compileShader(quad_shader_frag_source, GL_FRAGMENT_SHADER);
+    quad_shader_frag = compile_shader(quad_shader_frag_source, GL_FRAGMENT_SHADER);
     if (!quad_shader_frag) {
         return -1;
     }
 
-    quad_shader_prog = linkProgram(quad_shader_vert, quad_shader_frag);
+    quad_shader_prog = link_program(quad_shader_vert, quad_shader_frag);
     if (!quad_shader_prog) {
         return -1;
     }
