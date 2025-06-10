@@ -16,4 +16,5 @@ target_link_libraries(cmucam-viewer
         OpenGL::OpenGL
         SDL2::SDL2
         GLEW::GLEW
+        m
 )

@@ -50,6 +50,9 @@ static const uint8_t cmucam_cmd_ping[] = {'\r'};
 static const uint8_t cmucam_rcmd_dumpframe[] = {'D', 'F', 0};
 static const uint8_t cmucam_rcmd_rawmode_exit[] = {'R', 'M', 1, 0};
 static const uint8_t cmucam_rcmd_reset[] = {'R', 'S', 0};
+static const uint8_t cmucam_rcmd_reset_window[] = {'S', 'W', 0};
+static const uint8_t cmucam_rcmd_get_mean[] = {'G', 'M', 0};
+static const uint8_t cmucam_rcmd_track_window[] = {'T', 'W', 0};
 
 static const uint8_t cmucam_acmd_rawmode_enter[] = {'R', 'M', ' ', '7', '\r'};
 static const uint8_t cmucam_acmd_reset[] = {'R', 'S', '\r'};
@@ -95,7 +98,7 @@ static int cmucam_quiesce(int fd) {
 
 // wait on a byte to be available from the CMUcam
 static int cmucam_readbyte(int fd) {
-    int rc = cmucam_await(fd, 100);
+    int rc = cmucam_await(fd, 200);
     if (rc < 0) {
         return rc;
     }
@@ -253,6 +256,20 @@ int cmucam_rawmode_exit(int fd) {
     return cmucam_find_prompt(fd);
 }
 
+int cmucam_end_stream(int fd) {
+    const uint8_t cmucam_rcmd_end_stream[] = {'\r'};
+    int rc = write(fd, cmucam_rcmd_end_stream, sizeof cmucam_rcmd_end_stream);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_end_stream) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+
+    return cmucam_find_prompt(fd);
+}
+
 int cmucam_dumpframe(int fd) {
     int rc = write(fd, cmucam_rcmd_dumpframe, sizeof cmucam_rcmd_dumpframe);
     if (rc < 0) {
@@ -262,6 +279,7 @@ int cmucam_dumpframe(int fd) {
         fprintf(stderr, "failed to write all command bytes to CMUcam\n");
         return -EIO;
     }
+    return 0;
 }
 
 int cmucam_dumpframe_next_column(int fd, uint8_t* column) {
@@ -310,6 +328,103 @@ int cmucam_dumpframe_next_column(int fd, uint8_t* column) {
 
         received += rc;
     } while (received != column_size);
+    return 0;
+}
+
+int cmucam_set_window(int fd, int x, int y, int x2, int y2) {
+    const uint8_t cmucam_rcmd_set_window[] = {
+        'S', 'W', 4,
+        x2 < x ? x2 : x, y2 < y ? y2 : y,
+        x2 > x ? x2 : x, y2 > y ? y2 : y
+    };
+
+    int rc = write(fd, cmucam_rcmd_set_window, sizeof cmucam_rcmd_set_window);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_set_window) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+    return cmucam_find_prompt(fd);
+}
+
+int cmucam_reset_window(int fd) {
+    int rc = write(fd, cmucam_rcmd_reset_window, sizeof cmucam_rcmd_reset_window);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_reset_window) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+    return cmucam_find_prompt(fd);
+}
+
+int cmucam_track_window(int fd) {
+    int rc = write(fd, cmucam_rcmd_track_window, sizeof cmucam_rcmd_track_window);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_track_window) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+    return 0;
+}
+
+int cmucam_get_mean(int fd) {
+    int rc = write(fd, cmucam_rcmd_get_mean, sizeof cmucam_rcmd_get_mean);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_reset_window) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+
+    return 0;
+}
+
+int cmucam_read_packet(int fd, uint8_t *packet, uint8_t n) {
+    // find the start of a packet
+    int rc = 0;
+    do {
+        rc = cmucam_readbyte(fd);
+        if (rc < 0) {
+            return rc;
+        }
+    } while (rc != 255);
+
+    // get the packet type
+    uint8_t packet_size = 255;
+    for (int i = 0; i < packet_size; i++) {
+        rc = cmucam_readbyte(fd);
+        if (rc < 0) {
+            return rc;
+        }
+        if (i < n) {
+            packet[i] = rc;
+        }
+
+        // identify packet size based on type
+        if (packet_size == 255) {
+            switch (rc) {
+                case CMUCAM_PACKET_TYPE_C:
+                    packet_size = CMUCAM_PACKET_TYPE_C_SIZE;
+                    break;
+                case CMUCAM_PACKET_TYPE_M:
+                    packet_size = CMUCAM_PACKET_TYPE_M_SIZE;
+                    break;
+                case CMUCAM_PACKET_TYPE_S:
+                    packet_size = CMUCAM_PACKET_TYPE_S_SIZE;
+                    break;
+                default:
+                    fprintf(stderr, "CMUcam sent unknown packet type - %c\n", rc);
+                    return -EINVAL;
+            }
+        }
+    }
     return 0;
 }
 

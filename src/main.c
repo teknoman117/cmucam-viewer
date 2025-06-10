@@ -37,6 +37,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include "cmucam.h"
 #include "shaders.h"
@@ -102,7 +103,7 @@ int main(int argc, char** argv) {
         return rc;
     }
 
-    int cmucam = cmucam_open("/dev/ttyUSB0");
+    int cmucam = cmucam_open(cmucam_path);
     if (cmucam < 0) {
         fprintf(stderr, "Failed to open CMUcam: %d\n", cmucam);
         return EXIT_FAILURE;
@@ -119,12 +120,14 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
 
+    int width = CMUCAM_IMAGE_WIDTH * 2 * window_scale;
+    int height = CMUCAM_IMAGE_HEIGHT * window_scale;
     SDL_Window *window = SDL_CreateWindow(
             "CMUCam v1.12 Viewer",
             SDL_WINDOWPOS_UNDEFINED,
             SDL_WINDOWPOS_UNDEFINED,
-            CMUCAM_IMAGE_WIDTH * 2 * window_scale,
-            CMUCAM_IMAGE_HEIGHT * window_scale,
+            width,
+            height,
             SDL_WINDOW_OPENGL | SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE);
     if (!window) {
         fprintf(stderr, "failed to create SDL window with error: %s\n", SDL_GetError());
@@ -193,7 +196,7 @@ int main(int argc, char** argv) {
     glClearColor(0, 0, 0, 1);
     SDL_GL_SetSwapInterval(1);
     SDL_ShowWindow(window);
-    
+
     // Render CMUcam frame dumps
     rc = cmucam_dumpframe(cmucam);
     if (rc < 0) {
@@ -202,6 +205,11 @@ int main(int argc, char** argv) {
 
     GLuint column = 0;
     bool quit = false;
+    bool drag_finished = false;
+    int drag_start_x = 0;
+    int drag_start_y = 0;
+    int drag_stop_x = 0;
+    int drag_stop_y = 0;
     while (1) {
         // Fetch the next column from the camera
         uint8_t column_data[CMUCAM_IMAGE_HEIGHT * 3];
@@ -213,6 +221,49 @@ int main(int argc, char** argv) {
             // End-of-frame: exit or begin the next frame
             if (quit) {
                 break;
+            }
+
+            // should we get the mean of a region
+            if (drag_finished) {
+                printf("setting window to: %d,%d -> %d,%d\n", drag_start_x, drag_start_y, drag_stop_x, drag_stop_y);
+                rc = cmucam_set_window(cmucam, drag_start_x, drag_start_y, drag_stop_x, drag_stop_y);
+                if (rc < 0) {
+                    fprintf(stderr, "failed to set window on camera\n");
+                    return rc;
+                }
+
+                rc = cmucam_get_mean(cmucam);
+                if (rc < 0) {
+                    fprintf(stderr, "failed to dump mean color of window\n");
+                    return rc;
+                }
+
+                // get 8 mean packets
+                for (int i = 0; i < 8; i++) {
+                    uint8_t packet[CMUCAM_PACKET_TYPE_S_SIZE] = {};
+                    rc = cmucam_read_packet(cmucam, packet, sizeof packet);
+                    if (rc < 0) {
+                        fprintf(stderr, "failed to read packet from the cmucam\n");
+                        return rc;
+                    }
+
+                    printf("MEAN: Rmean: %d, Gmean: %d, Bmean: %d, Rdev: %d, Gdev: %d, Bdev: %d\n",
+                            packet[1], packet[2], packet[3], packet[4], packet[5], packet[6]);
+                }
+
+                rc = cmucam_end_stream(cmucam);
+                if (rc < 0) {
+                    fprintf(stderr, "failed to stop cmucam data stream\n");
+                    return rc;
+                }
+
+                rc = cmucam_reset_window(cmucam);
+                if (rc < 0) {
+                    fprintf(stderr, "failed to reset cmucam window\n");
+                    return rc;
+                }
+
+                drag_finished = false;
             }
 
             rc = cmucam_dumpframe(cmucam);
@@ -233,11 +284,30 @@ int main(int argc, char** argv) {
             } else if (event.type == SDL_WINDOWEVENT) {
                 if (event.window.event == SDL_WINDOWEVENT_RESIZED) {
                     // update viewport with new window size
-                    int width;
-                    int height;
                     SDL_GetWindowSize(window, &width, &height);
                     glViewport(0, 0, width, height);
                 }
+            } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                // scale click into CMUcam coordinates
+                float x = event.button.x;
+                float y = event.button.y;
+                x = (x < 0) ? 0 : (x >= width) ? width - 1 : x;
+                y = (y < 0) ? 0 : (y >= height) ? height - 1 : y;
+                x *= ((float) CMUCAM_IMAGE_WIDTH) / ((float) width);
+                y *= ((float) CMUCAM_IMAGE_HEIGHT) / ((float) height);
+                drag_start_x = (x < 1.f) ? 1.f : (x > CMUCAM_IMAGE_WIDTH) ? CMUCAM_IMAGE_WIDTH : x;
+                drag_start_y = (y < 1.f) ? 1.f : (y > CMUCAM_IMAGE_HEIGHT) ? CMUCAM_IMAGE_HEIGHT : y;
+            } else if (event.type == SDL_MOUSEBUTTONUP) {
+                // scale click into CMUcam coordinates
+                float x = event.button.x;
+                float y = event.button.y;
+                x = (x < 0) ? 0 : (x >= width) ? width - 1 : x;
+                y = (y < 0) ? 0 : (y >= height) ? height - 1 : y;
+                x *= ((float) CMUCAM_IMAGE_WIDTH) / ((float) width);
+                y *= ((float) CMUCAM_IMAGE_HEIGHT) / ((float) height);
+                drag_stop_x = (x < 1.f) ? 1.f : (x > CMUCAM_IMAGE_WIDTH) ? CMUCAM_IMAGE_WIDTH : x;
+                drag_stop_y = (y < 1.f) ? 1.f : (y > CMUCAM_IMAGE_HEIGHT) ? CMUCAM_IMAGE_HEIGHT : y;
+                drag_finished = true;
             }
         }
 

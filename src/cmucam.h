@@ -35,6 +35,13 @@
 #define CMUCAM_IMAGE_WIDTH 80
 #define CMUCAM_IMAGE_HEIGHT 143
 
+#define CMUCAM_PACKET_TYPE_C ((uint8_t) 'C')
+#define CMUCAM_PACKET_TYPE_C_SIZE 7
+#define CMUCAM_PACKET_TYPE_M ((uint8_t) 'M')
+#define CMUCAM_PACKET_TYPE_M_SIZE 9
+#define CMUCAM_PACKET_TYPE_S ((uint8_t) 'S')
+#define CMUCAM_PACKET_TYPE_S_SIZE 7
+
 int cmucam_initialize();
 
 int cmucam_open(const char* path);
@@ -42,5 +49,14 @@ int cmucam_close(int fd);
 
 int cmucam_dumpframe(int fd);
 int cmucam_dumpframe_next_column(int fd, uint8_t* column);
+
+int cmucam_set_window(int fd, int x, int y, int x2, int y2);
+int cmucam_reset_window(int fd);
+int cmucam_track_window(int fd);
+
+int cmucam_get_mean(int fd);
+
+int cmucam_read_packet(int fd, uint8_t *packet, uint8_t n);
+int cmucam_end_stream(int fd);
 
 #endif /* CMUCAM_VIEWER_CMUCAM_H_ */
