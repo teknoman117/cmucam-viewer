@@ -270,6 +270,23 @@ int cmucam_end_stream(int fd) {
     return cmucam_find_prompt(fd);
 }
 
+int cmucam_set_color_mode(int fd, bool yuv, bool auto_white_balance) {
+    const uint8_t color_mode = (1u << 5)
+            | (!yuv ? (1u << 3) : 0u)
+            | (auto_white_balance ? (1u << 2) : 0u);
+    const uint8_t cmucam_rcmd_set_color_mode[] = { 'C', 'R', 2, 18, color_mode };
+
+    int rc = write(fd, cmucam_rcmd_set_color_mode, sizeof cmucam_rcmd_set_color_mode);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_set_color_mode) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+    return cmucam_find_prompt(fd);
+}
+
 int cmucam_dumpframe(int fd) {
     int rc = write(fd, cmucam_rcmd_dumpframe, sizeof cmucam_rcmd_dumpframe);
     if (rc < 0) {

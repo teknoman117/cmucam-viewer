@@ -197,6 +197,12 @@ int main(int argc, char** argv) {
     SDL_GL_SetSwapInterval(1);
     SDL_ShowWindow(window);
 
+    // Switch to YUV mode
+    rc = cmucam_set_color_mode(cmucam, true, false);
+    if (rc < 0) {
+        return rc;
+    }
+
     // Render CMUcam frame dumps
     rc = cmucam_dumpframe(cmucam);
     if (rc < 0) {
