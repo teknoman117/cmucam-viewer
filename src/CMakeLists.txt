@@ -17,4 +17,5 @@ target_link_libraries(cmucam-viewer
         SDL2::SDL2
         GLEW::GLEW
         m
+        imgui
 )

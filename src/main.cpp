@@ -32,6 +32,10 @@
 
 #include <SDL.h>
 
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_opengl3.h"
+
 #include <errno.h>
 #include <getopt.h>
 #include <inttypes.h>
@@ -119,6 +123,9 @@ int main(int argc, char** argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
     int width = CMUCAM_IMAGE_WIDTH * 2 * window_scale;
     int height = CMUCAM_IMAGE_HEIGHT * window_scale;
@@ -139,6 +146,9 @@ int main(int argc, char** argv) {
         fprintf(stderr, "failed to create SDL OpenGL context with error: %s\n", SDL_GetError());
         return EXIT_FAILURE;
     }
+
+    SDL_GL_SetSwapInterval(1);
+    SDL_ShowWindow(window);
 
     // Setup OpenGL resources
     const GLubyte *version = glGetString(GL_VERSION);
@@ -193,9 +203,19 @@ int main(int argc, char** argv) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    // Setup Dear ImGui context
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+    ImGui::StyleColorsDark();
+    ImGui_ImplSDL2_InitForOpenGL(window, context);
+    ImGui_ImplOpenGL3_Init("#version 430 core");
+
     glClearColor(0, 0, 0, 1);
-    SDL_GL_SetSwapInterval(1);
-    SDL_ShowWindow(window);
+    glViewport(0, 0, width, height);
 
     // Switch to YUV mode
     rc = cmucam_set_color_mode(cmucam, true, false);
@@ -285,6 +305,7 @@ int main(int argc, char** argv) {
         // Process window events before we start making OpenGL calls
         SDL_Event event;
         while (SDL_PollEvent(&event) != 0) {
+            ImGui_ImplSDL2_ProcessEvent(&event);
             if (event.type == SDL_QUIT) {
                 quit = true;
             } else if (event.type == SDL_WINDOWEVENT) {
@@ -293,7 +314,7 @@ int main(int argc, char** argv) {
                     SDL_GetWindowSize(window, &width, &height);
                     glViewport(0, 0, width, height);
                 }
-            } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+            } else if (event.type == SDL_MOUSEBUTTONDOWN && !io.WantCaptureMouse) {
                 // scale click into CMUcam coordinates
                 float x = event.button.x;
                 float y = event.button.y;
@@ -303,7 +324,7 @@ int main(int argc, char** argv) {
                 y *= ((float) CMUCAM_IMAGE_HEIGHT) / ((float) height);
                 drag_start_x = (x < 1.f) ? 1.f : (x > CMUCAM_IMAGE_WIDTH) ? CMUCAM_IMAGE_WIDTH : x;
                 drag_start_y = (y < 1.f) ? 1.f : (y > CMUCAM_IMAGE_HEIGHT) ? CMUCAM_IMAGE_HEIGHT : y;
-            } else if (event.type == SDL_MOUSEBUTTONUP) {
+            } else if (event.type == SDL_MOUSEBUTTONUP && !io.WantCaptureMouse) {
                 // scale click into CMUcam coordinates
                 float x = event.button.x;
                 float y = event.button.y;
@@ -317,6 +338,14 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Start the Dear ImGui frame
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplSDL2_NewFrame();
+        ImGui::NewFrame();
+
+        // TODO: Render the UI
+        ImGui::ShowDemoWindow();
+
         // update texture
         //
         // we store the texture rotated so that the column updates from the CMUcam are sent to
@@ -327,6 +356,7 @@ int main(int argc, char** argv) {
         column++;
 
         // redraw window
+        ImGui::Render();
         glClear(GL_COLOR_BUFFER_BIT);
         glUseProgram(quad_shader_prog);
         glUniform1i(0, 0);
@@ -334,6 +364,7 @@ int main(int argc, char** argv) {
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glBindVertexArray(0);
         glBindTexture(GL_TEXTURE_2D, 0);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         SDL_GL_SwapWindow(window);
     }
 
