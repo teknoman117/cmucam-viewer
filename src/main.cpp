@@ -46,6 +46,13 @@
 #include "cmucam.h"
 #include "shaders.h"
 
+enum class CMUcamState {
+    Idle,
+    Frame,
+    Mean,
+    Tracking,
+};
+
 const char *cmucam_path = "/dev/ttyUSB0";
 unsigned int window_scale = 1;
 
@@ -239,6 +246,9 @@ int main(int argc, char** argv) {
     int drag_stop_x = 0;
     int drag_stop_y = 0;
 
+    // App
+    auto camera_state = CMUcamState::Frame;
+
     // CMUcam Color Parameters
     int color_mode = 0;
     bool auto_white_balance = false;
@@ -252,7 +262,18 @@ int main(int argc, char** argv) {
     float tracking_color_max[3] = { 1.f, 1.f, 1.f };
     bool update_noise_filter = false;
     bool update_tracking_colors = false;
+    bool track = false;
 
+    // CMUcam Mean Parameters
+    float mean_color[3] = { 0.f, 0.f, 0.f };
+    float mean_deviation[3] = { 0.f, 0.f, 0.f };
+    bool mean = false;
+
+    // CMUcam Dump Frame Parameters
+    bool dump_frame_continuous = true;
+    bool dump_frame = true;
+
+    // Main loop
     while (1) {
         // Fetch the next column from the camera
         uint8_t column_data[CMUCAM_IMAGE_HEIGHT * 3];
@@ -283,15 +304,25 @@ int main(int argc, char** argv) {
 
                 // get 8 mean packets
                 for (int i = 0; i < 8; i++) {
-                    uint8_t packet[CMUCAM_PACKET_TYPE_S_SIZE] = {};
-                    rc = cmucam_read_packet(cmucam, packet, sizeof packet);
+                    uint8_t extended[1024];
+                    cmucam_packet packet;
+                    packet.extended.data = extended;
+                    packet.extended.capacity = sizeof extended;
+                    rc = cmucam_read_packet(cmucam, &packet);
                     if (rc < 0) {
                         fprintf(stderr, "failed to read packet from the cmucam\n");
                         return rc;
                     }
 
-                    printf("MEAN: Rmean: %d, Gmean: %d, Bmean: %d, Rdev: %d, Gdev: %d, Bdev: %d\n",
-                            packet[1], packet[2], packet[3], packet[4], packet[5], packet[6]);
+                    if (packet.type == CMUCAM_PACKET_TYPE_S) {
+                        printf("MEAN: Rmean: %d, Gmean: %d, Bmean: %d, Rdev: %d, Gdev: %d, Bdev: %d\n",
+                                packet.s.rmean, packet.s.gmean, packet.s.bmean,
+                                packet.s.rdeviation, packet.s.gdeviation, packet.s.bdeviation);
+                    } else if (packet.type == CMUCAM_PACKET_TYPE_LM_MEAN) {
+                        printf("GOT LM MEAN PACKET - %zu bytes\n", packet.extended.length);
+                    } else {
+                        printf("WAT\n");
+                    }
                 }
 
                 rc = cmucam_end_stream(cmucam);
@@ -397,7 +428,7 @@ int main(int argc, char** argv) {
 
         // Render the UI
         ImGui::Begin("CMUcam Controls", nullptr, ImGuiWindowFlags_NoCollapse);
-        if (ImGui::CollapsingHeader("Color Options", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Options", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Text("Color Mode");
             ImGui::SameLine();
             update_color_mode |= ImGui::RadioButton("RGB", &color_mode, 0);
@@ -406,33 +437,47 @@ int main(int argc, char** argv) {
             update_color_mode |= ImGui::Checkbox("Auto White Balance", &auto_white_balance);
             update_auto_exposure |= ImGui::Checkbox("Auto Exposure", &auto_exposure);
         }
-        if (ImGui::CollapsingHeader("Color Tracking", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Tracking", ImGuiTreeNodeFlags_DefaultOpen)) {
             update_noise_filter |= ImGui::Checkbox("Noise Filtering", &noise_filter);
             update_tracking_colors |= ImGui::ColorEdit3("Minimum", tracking_color_min,
                     ImGuiColorEditFlags_DisplayRGB);
             update_tracking_colors |= ImGui::ColorEdit3("Maximum", tracking_color_max,
                     ImGuiColorEditFlags_DisplayRGB);
+            track = ImGui::Button("Track");
+        }
+        if (ImGui::CollapsingHeader("Mean", ImGuiTreeNodeFlags_DefaultOpen)) {
+            mean = ImGui::Button("Get Mean");
+        }
+        if (ImGui::CollapsingHeader("Frame Dump", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("Continuous", &dump_frame_continuous);
+            if (camera_state == CMUcamState::Frame) {
+                ImGui::Text("Dumping Column: %d", column);
+            } else {
+                dump_frame = ImGui::Button("Dump");
+            }
         }
         ImGui::End();
+        ImGui::Render();
 
         // update texture
         //
         // we store the texture rotated so that the column updates from the CMUcam are sent to
         // OpenGL as row updates, which is generally more performant.
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, frame);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, column, CMUCAM_IMAGE_HEIGHT, 1, GL_RGB, GL_UNSIGNED_BYTE, column_data);
+        glTextureSubImage2D(frame, 0, 0, column, CMUCAM_IMAGE_HEIGHT, 1, GL_RGB, GL_UNSIGNED_BYTE, column_data);
         column++;
 
-        // redraw window
-        ImGui::Render();
+        // draw camera data texture
         glClear(GL_COLOR_BUFFER_BIT);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, frame);
         glUseProgram(quad_shader_prog);
         glUniform1i(0, 0);
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glBindVertexArray(0);
         glBindTexture(GL_TEXTURE_2D, 0);
+
+        // draw gui, swap buffers
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         SDL_GL_SwapWindow(window);
     }

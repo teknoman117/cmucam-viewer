@@ -36,6 +36,7 @@ extern "C" {
 
 #include <inttypes.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #define CMUCAM_IMAGE_WIDTH 80
 #define CMUCAM_IMAGE_HEIGHT 143
@@ -44,8 +45,74 @@ extern "C" {
 #define CMUCAM_PACKET_TYPE_C_SIZE 7
 #define CMUCAM_PACKET_TYPE_M ((uint8_t) 'M')
 #define CMUCAM_PACKET_TYPE_M_SIZE 9
+#define CMUCAM_PACKET_TYPE_N ((uint8_t) 'N')
+#define CMUCAM_PACKET_TYPE_N_SIZE 10
 #define CMUCAM_PACKET_TYPE_S ((uint8_t) 'S')
 #define CMUCAM_PACKET_TYPE_S_SIZE 7
+
+#define CMUCAM_PACKET_TYPE_BASIC ((uint8_t ) 255)
+#define CMUCAM_PACKET_TYPE_F_START ((uint8_t) 1)
+#define CMUCAM_PACKET_TYPE_F_START_SIZE (CMUCAM_IMAGE_HEIGHT * 3)
+#define CMUCAM_PACKET_TYPE_F_NEXT ((uint8_t) 2)
+#define CMUCAM_PACKET_TYPE_F_NEXT_SIZE (CMUCAM_PACKET_TYPE_F_START_SIZE)
+#define CMUCAM_PACKET_TYPE_F_END ((uint8_t) 3)
+#define CMUCAM_PACKET_TYPE_F_END_SIZE (0)
+
+// Line-Mode Extended Tracking Data packet size is 80x48 bit-pixels (so 10 bytes * 48 rows)
+#define CMUCAM_PACKET_TYPE_LM_TRACK ((uint8_t) 0xAA)
+#define CMUCAM_PACKET_TYPE_LM_TRACK_SIZE (10*48)
+
+// Line-Mode Extended Mean Data packet size is 143/2 lines (so ?)
+#define CMUCAM_PACKET_TYPE_LM_MEAN ((uint8_t) 0xFE)
+#define CMUCAM_PACKET_TYPE_LM_MEAN_SIZE ((143/2) * 3)
+
+struct cmucam_packet {
+    uint8_t type;
+    union {
+        struct {
+            uint8_t lx;
+            uint8_t ly;
+            uint8_t rx;
+            uint8_t ry;
+            uint8_t pixels;
+            uint8_t confidence;
+        } c;
+        struct {
+            uint8_t mx;
+            uint8_t my;
+            uint8_t lx;
+            uint8_t ly;
+            uint8_t rx;
+            uint8_t ry;
+            uint8_t pixels;
+            uint8_t confidence;
+        } m;
+        struct {
+            uint8_t spos;
+            uint8_t mx;
+            uint8_t my;
+            uint8_t lx;
+            uint8_t ly;
+            uint8_t rx;
+            uint8_t ry;
+            uint8_t pixels;
+            uint8_t confidence;
+        } n;
+        struct {
+            uint8_t rmean;
+            uint8_t gmean;
+            uint8_t bmean;
+            uint8_t rdeviation;
+            uint8_t gdeviation;
+            uint8_t bdeviation;
+        } s;
+        struct {
+            uint8_t *data;
+            size_t capacity;
+            size_t length;
+        } extended;
+    };
+};
 
 int cmucam_initialize();
 
@@ -69,7 +136,7 @@ int cmucam_track_color(int fd, uint8_t rmin, uint8_t rmax, uint8_t gmin, uint8_t
 
 int cmucam_get_mean(int fd);
 
-int cmucam_read_packet(int fd, uint8_t *packet, uint8_t n);
+int cmucam_read_packet(int fd, struct cmucam_packet *packet);
 int cmucam_end_stream(int fd);
 
 #ifdef __cplusplus

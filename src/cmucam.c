@@ -64,6 +64,9 @@ static int cmucam_await(int fd, int timeout) {
     struct epoll_event events[CMUCAM_MAX_CAMERAS];
     int nfds = epoll_wait(epoll_fd, events, CMUCAM_MAX_CAMERAS, timeout);
     if (nfds < 0) {
+        if (errno == EINTR) {
+            return cmucam_await(fd, timeout);
+        }
         perror("failed to poll CMUcam");
         return nfds;
     } else {
@@ -97,7 +100,7 @@ static int cmucam_quiesce(int fd) {
 }
 
 // wait on a byte to be available from the CMUcam
-static int cmucam_readbyte(int fd) {
+static int cmucam_read_byte(int fd) {
     int rc = cmucam_await(fd, 200);
     if (rc < 0) {
         return rc;
@@ -115,11 +118,28 @@ static int cmucam_readbyte(int fd) {
     return b;
 }
 
+static int cmucam_read_bytes(int fd, uint8_t *data, size_t n) {
+    size_t c = 0;
+    do {
+        int rc = cmucam_await(fd, 200);
+        if (rc < 0) {
+            return rc;
+        }
+
+        rc = read(fd, data + c, n - c);
+        if (rc < 0) {
+            return rc;
+        }
+        c += rc;
+    } while (c != n);
+    return 0;
+}
+
 // read data until the prompt is found (a ':' character)
 static int cmucam_find_prompt(int fd) {
     int rc = 0;
     do {
-        rc = cmucam_readbyte(fd);
+        rc = cmucam_read_byte(fd);
         if (rc < 0) {
             return rc;
         }
@@ -274,7 +294,7 @@ int cmucam_dumpframe(int fd) {
 }
 
 int cmucam_dumpframe_next_column(int fd, uint8_t* column) {
-    int rc = cmucam_readbyte(fd);
+    int rc = cmucam_read_byte(fd);
     if (rc < 0) {
         return rc;
     }
@@ -284,7 +304,7 @@ int cmucam_dumpframe_next_column(int fd, uint8_t* column) {
         // start of frame, no action
     } else if (rc == CMUCAM_DF_START_OF_COLUMN) {
         // new column, but we have to check for end-of-frame sentinel in next byte
-        rc = cmucam_readbyte(fd);
+        rc = cmucam_read_byte(fd);
         if (rc < 0) {
             return rc;
         } else if (rc == CMUCAM_DF_END_OF_FRAME) {
@@ -351,46 +371,145 @@ int cmucam_get_mean(int fd) {
     return cmucam_command_noprompt(fd, cmucam_rcmd_get_mean, sizeof cmucam_rcmd_get_mean);
 }
 
-int cmucam_read_packet(int fd, uint8_t *packet, uint8_t n) {
-    // find the start of a packet
-    int rc = 0;
-    do {
-        rc = cmucam_readbyte(fd);
+static int cmucam_read_c_packet(int fd, struct cmucam_packet *packet) {
+    return cmucam_read_bytes(fd, (uint8_t *) &packet->c, sizeof packet->c);
+}
+
+static int cmucam_read_m_packet(int fd, struct cmucam_packet *packet) {
+    return cmucam_read_bytes(fd, (uint8_t *) &packet->m, sizeof packet->m);
+}
+
+static int cmucam_read_n_packet(int fd, struct cmucam_packet *packet) {
+    return cmucam_read_bytes(fd, (uint8_t *) &packet->n, sizeof packet->n);
+}
+
+static int cmucam_read_s_packet(int fd, struct cmucam_packet *packet) {
+    return cmucam_read_bytes(fd, (uint8_t *) &packet->s, sizeof packet->s);
+}
+
+static int cmucam_read_f_packet(int fd, struct cmucam_packet *packet) {
+    // for f-type packets, first byte could be end-of-frame sentinel
+    int rc = cmucam_read_byte(fd);
+    if (rc < 0) {
+        return rc;
+    }
+    if (rc == CMUCAM_PACKET_TYPE_F_END) {
+        packet->type = CMUCAM_PACKET_TYPE_F_END;
+        return cmucam_find_prompt(fd);
+    }
+
+    // read column into extended buffer
+    if (packet->extended.data != NULL
+            && packet->extended.capacity >= CMUCAM_PACKET_TYPE_F_NEXT_SIZE) {
+        packet->extended.data[0] = rc;
+        packet->extended.length = CMUCAM_PACKET_TYPE_F_NEXT;
+        return cmucam_read_bytes(fd, packet->extended.data + 1, CMUCAM_PACKET_TYPE_F_NEXT_SIZE - 1);
+    }
+
+    // no extended buffer, discard data
+    for (int i = 1; i < CMUCAM_PACKET_TYPE_F_NEXT_SIZE; i++) {
+        rc = cmucam_read_byte(fd);
         if (rc < 0) {
             return rc;
-        }
-    } while (rc != 255);
-
-    // get the packet type
-    uint8_t packet_size = 255;
-    for (int i = 0; i < packet_size; i++) {
-        rc = cmucam_readbyte(fd);
-        if (rc < 0) {
-            return rc;
-        }
-        if (i < n) {
-            packet[i] = rc;
-        }
-
-        // identify packet size based on type
-        if (packet_size == 255) {
-            switch (rc) {
-                case CMUCAM_PACKET_TYPE_C:
-                    packet_size = CMUCAM_PACKET_TYPE_C_SIZE;
-                    break;
-                case CMUCAM_PACKET_TYPE_M:
-                    packet_size = CMUCAM_PACKET_TYPE_M_SIZE;
-                    break;
-                case CMUCAM_PACKET_TYPE_S:
-                    packet_size = CMUCAM_PACKET_TYPE_S_SIZE;
-                    break;
-                default:
-                    fprintf(stderr, "CMUcam sent unknown packet type - %c\n", rc);
-                    return -EINVAL;
-            }
         }
     }
     return 0;
+}
+
+static int cmucam_read_lm_track_packet(int fd, struct cmucam_packet *packet) {
+    packet->extended.length = 0;
+    while (1) {
+        int rc = cmucam_read_byte(fd);
+        if (rc < 0) {
+            return rc;
+        } else if (rc == 0xAA) {
+            break;
+        }
+
+        if (packet->extended.data != NULL
+                && packet->extended.length < packet->extended.capacity) {
+            packet->extended.data[packet->extended.length++] = rc;
+        }
+    }
+
+    // read one final 0xAA packet
+    int rc = cmucam_read_byte(fd);
+    if (rc < 0) {
+        return rc;
+    } else if (rc != 0xAA) {
+        return -EINVAL;
+    }
+    return 0;
+}
+
+static int cmucam_read_lm_mean_packet(int fd, struct cmucam_packet *packet) {
+    packet->extended.length = 0;
+    while (1) {
+        int rc = cmucam_read_byte(fd);
+        if (rc < 0) {
+            return rc;
+        } else if (rc == 0xFD) {
+            break;
+        }
+
+        if (packet->extended.data != NULL
+                && packet->extended.length < packet->extended.capacity) {
+            packet->extended.data[packet->extended.length++] = rc;
+        }
+    }
+    return 0;
+}
+
+static int cmucam_detect_packet(int fd) {
+    while (1) {
+        int rc = cmucam_read_byte(fd);
+        if (rc < 0) {
+            return rc;
+        }
+
+        switch (rc) {
+            case CMUCAM_PACKET_TYPE_BASIC:
+                // this is a basic data packet
+                return cmucam_read_byte(fd);
+            case CMUCAM_PACKET_TYPE_F_START:
+            case CMUCAM_PACKET_TYPE_F_NEXT:
+            case CMUCAM_PACKET_TYPE_LM_MEAN:
+            case CMUCAM_PACKET_TYPE_LM_TRACK:
+                // this is an extended type packet (frame dump, line mode, etc.)
+                return rc;
+            default:
+                continue;
+        }
+    }
+}
+
+int cmucam_read_packet(int fd, struct cmucam_packet *packet) {
+    int rc = cmucam_detect_packet(fd);
+    if (rc < 0) {
+        return rc;
+    }
+
+    packet->type = rc;
+    switch (rc) {
+        case CMUCAM_PACKET_TYPE_C:
+            return cmucam_read_c_packet(fd, packet);
+        case CMUCAM_PACKET_TYPE_M:
+            return cmucam_read_m_packet(fd, packet);
+        case CMUCAM_PACKET_TYPE_N:
+            return cmucam_read_n_packet(fd, packet);
+        case CMUCAM_PACKET_TYPE_S:
+            return cmucam_read_s_packet(fd, packet);
+        case CMUCAM_PACKET_TYPE_F_START:
+        case CMUCAM_PACKET_TYPE_F_NEXT:
+            return cmucam_read_f_packet(fd, packet);
+        case CMUCAM_PACKET_TYPE_LM_TRACK:
+            return cmucam_read_lm_track_packet(fd, packet);
+        case CMUCAM_PACKET_TYPE_LM_MEAN:
+            return cmucam_read_lm_mean_packet(fd, packet);
+        default:
+            break;
+    }
+    return rc;
 }
 
 static int cmucam_open_port(const char* path) {
