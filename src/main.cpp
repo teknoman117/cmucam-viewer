@@ -175,10 +175,10 @@ int main(int argc, char** argv) {
     }
 
     const GLfloat quad[] = {
-            -1.0f, -1.0f, 0.0f, 0.0f,
-            -1.0f,  1.0f, 1.0f, 0.0f,
-            1.0f, -1.0f, 0.0f, 1.0f,
-            1.0f,  1.0f, 1.0f, 1.0f,
+            -1.0f, -1.0f, 1.0f, 0.0f,
+            -1.0f,  1.0f, 1.0f, 1.0f,
+            1.0f, -1.0f, 0.0f, 0.0f,
+            1.0f,  1.0f, 0.0f, 1.0f,
     };
 
     GLuint quadVAO;
@@ -271,6 +271,10 @@ int main(int argc, char** argv) {
     bool noise_filter = true;
     float tracking_color_min[3] = { 0.f, 0.f, 0.f };
     float tracking_color_max[3] = { 1.f, 1.f, 1.f };
+    int mx = 0;
+    int my = 0;
+    int pixels = 0;
+    int confidence = 0;
     bool update_noise_filter = false;
     bool update_tracking_colors = false;
     bool track = false;
@@ -283,6 +287,7 @@ int main(int argc, char** argv) {
     // CMUcam Dump Frame Parameters
     bool dump_frame_continuous = true;
     bool dump_frame = true;
+    uint8_t frame[CMUCAM_IMAGE_WIDTH][CMUCAM_IMAGE_HEIGHT][3];
 
     // Main loop
     while (1) {
@@ -305,7 +310,9 @@ int main(int argc, char** argv) {
             case CMUCAM_PACKET_TYPE_F_START:
                 column = 0;
             case CMUCAM_PACKET_TYPE_F_NEXT:
-                // update texture
+                memcpy(&frame[column], extended, packet.extended.length);
+
+                // update framebuffer texture
                 //
                 // we store the texture rotated so that the column updates from the CMUcam are sent
                 // to OpenGL as row updates, which is generally more performant.
@@ -328,6 +335,47 @@ int main(int argc, char** argv) {
                 mean_deviation[0] = (float) packet.s.rdeviation / 255.f;
                 mean_deviation[1] = (float) packet.s.gdeviation / 255.f;
                 mean_deviation[2] = (float) packet.s.bdeviation / 255.f;
+                break;
+
+            case CMUCAM_PACKET_TYPE_M:
+                mx = packet.m.mx;
+                my = packet.m.my;
+                pixels = (int) packet.m.pixels * 8;
+                confidence = packet.m.confidence;
+                break;
+
+            case CMUCAM_PACKET_TYPE_N:
+                mx = packet.n.mx;
+                my = packet.n.my;
+                pixels = (int) packet.n.pixels * 8;
+                confidence = packet.n.confidence;
+                break;
+
+            case CMUCAM_PACKET_TYPE_LM_MEAN:
+                // update mean gradient texture
+                //
+                // we store the texture rotated so that the column updates from the CMUcam are sent
+                // to OpenGL as row updates, which is generally more performant.
+                //
+                // TODO: if a window is set, the vertical resolution might not be halved
+                glTextureSubImage2D(textures.mean, 0, 0, 0, (CMUCAM_IMAGE_HEIGHT+1) / 2, 1, GL_RGB,
+                        GL_UNSIGNED_BYTE, extended);
+                break;
+
+            case CMUCAM_PACKET_TYPE_LM_TRACK:
+                // decode the bit image from the camera into opengl texture
+                for (int j = 0; j < 48; j++) {
+                    uint8_t row[80];
+                    for (int i = 0; i < 10; i++) {
+                        for (int b = 0; b < 8; b++) {
+                            bool set = !!((extended[(j*10)+i] >> (7-b)) & 0x01);
+                            row[(8*i)+b] = set ? 255 : 0;
+                        }
+                    }
+
+                    glTextureSubImage2D(textures.track, 0, 0, j, 80, 1, GL_RED,
+                            GL_UNSIGNED_BYTE, row);
+                }
                 break;
 
             default:
@@ -413,18 +461,18 @@ int main(int argc, char** argv) {
                 camera_state = CMUcamState::Mean;
             } else if (track || (resume_prior_state && prior_state == CMUcamState::Tracking)) {
                 rc = cmucam_track_color(cmucam,
-                        (float) tracking_color_min[0] / 255.f,
-                        (float) tracking_color_max[0] / 255.f,
-                        (float) tracking_color_min[1] / 255.f,
-                        (float) tracking_color_max[1] / 255.f,
-                        (float) tracking_color_min[2] / 255.f,
-                        (float) tracking_color_max[2] / 255.f);
+                        (float) tracking_color_min[0] * 255.f,
+                        (float) tracking_color_max[0] * 255.f,
+                        (float) tracking_color_min[1] * 255.f,
+                        (float) tracking_color_max[1] * 255.f,
+                        (float) tracking_color_min[2] * 255.f,
+                        (float) tracking_color_max[2] * 255.f);
                 if (rc < 0) {
                     return rc;
                 }
 
                 prior_state = camera_state;
-                camera_state = CMUcamState::Mean;
+                camera_state = CMUcamState::Tracking;
             }
         }
 
@@ -442,14 +490,26 @@ int main(int argc, char** argv) {
                 }
             } else if (event.type == SDL_MOUSEBUTTONDOWN && !io.WantCaptureMouse) {
                 // scale click into CMUcam coordinates
-                int x = event.button.x;
-                int y = event.button.y;
+                float x = event.button.x;
+                float y = event.button.y;
                 x = (x < 0) ? 0 : (x >= width) ? width - 1 : x;
                 y = (y < 0) ? 0 : (y >= height) ? height - 1 : y;
-                x *= ((float) CMUCAM_IMAGE_WIDTH) / ((float) width);
-                y *= ((float) CMUCAM_IMAGE_HEIGHT) / ((float) height);
-                x = (x < 1.f) ? 1.f : (x > CMUCAM_IMAGE_WIDTH) ? CMUCAM_IMAGE_WIDTH : x;
-                y = (y < 1.f) ? 1.f : (y > CMUCAM_IMAGE_HEIGHT) ? CMUCAM_IMAGE_HEIGHT : y;
+                x = (x + 0.5f) * ((float) CMUCAM_IMAGE_WIDTH) / ((float) width);
+                y = (y + 0.5f) * ((float) CMUCAM_IMAGE_HEIGHT) / ((float) height);
+                int ix = floor(x);
+                int iy = floor(y);
+
+                // image is flipped
+                iy = CMUCAM_IMAGE_HEIGHT - iy - 1;
+
+                // assign tracking colors
+                tracking_color_min[0] = (float) ((frame[ix][iy][0] > 30) ? frame[ix][iy][0] - 30 : 0) / 255.f;
+                tracking_color_min[1] = (float) ((frame[ix][iy][1] > 30) ? frame[ix][iy][1] - 30 : 0) / 255.f;
+                tracking_color_min[2] = (float) ((frame[ix][iy][2] > 30) ? frame[ix][iy][2] - 30 : 0) / 255.f;
+                tracking_color_max[0] = (float) ((frame[ix][iy][0] < 225) ? frame[ix][iy][0] + 30 : 255) / 255.f;
+                tracking_color_max[1] = (float) ((frame[ix][iy][1] < 225) ? frame[ix][iy][1] + 30 : 255) / 255.f;
+                tracking_color_max[2] = (float) ((frame[ix][iy][2] < 225) ? frame[ix][iy][2] + 30 : 255) / 255.f;
+                update_tracking_colors = true;
             }
         }
 
@@ -476,6 +536,11 @@ int main(int argc, char** argv) {
             update_tracking_colors |= ImGui::ColorEdit3("Maximum", tracking_color_max,
                     ImGuiColorEditFlags_DisplayRGB);
             track = ImGui::Button("Track");
+            if (camera_state == CMUcamState::Tracking) {
+                ImGui::Text("Centroid: %d, %d", mx, my);
+                ImGui::Text("Pixels: %d", pixels);
+                ImGui::Text("Confidence: %d", confidence);
+            }
         }
         if (ImGui::CollapsingHeader("Mean", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::ColorEdit3("Mean Color", mean_color, ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoLabel);
@@ -494,9 +559,23 @@ int main(int argc, char** argv) {
         // draw camera data texture
         glClear(GL_COLOR_BUFFER_BIT);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, textures.frame);
         glUseProgram(quad_shader_prog);
         glUniform1i(0, 0);
+
+        if (camera_state == CMUcamState::Frame
+                || (camera_state == CMUcamState::Idle && prior_state == CMUcamState::Frame)) {
+            glBindTexture(GL_TEXTURE_2D, textures.frame);
+            glUniform1i(1, 1);
+        } else if (camera_state == CMUcamState::Mean
+                || (camera_state == CMUcamState::Idle && prior_state == CMUcamState::Mean)) {
+            glBindTexture(GL_TEXTURE_2D, textures.mean);
+            glUniform1i(1, 1);
+        } else if (camera_state == CMUcamState::Tracking
+                || (camera_state == CMUcamState::Idle && prior_state == CMUcamState::Tracking)) {
+            glBindTexture(GL_TEXTURE_2D, textures.track);
+            glUniform1i(1, 0);
+        }
+
         glBindVertexArray(quadVAO);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         glBindVertexArray(0);

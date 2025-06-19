@@ -57,10 +57,15 @@ static const char *quad_shader_frag_source =
         "                                             \n"
         "in vec2 uv;                                  \n"
         "layout (location = 0) uniform sampler2D tex; \n"
+        "layout (location = 1) uniform bool transpose;\n"
         "layout (location = 0) out vec4 color;        \n"
         "                                             \n"
         "void main() {                                \n"
-        "    vec4 color_in = texture(tex, uv);        \n"
+        "    vec2 coord = uv;                         \n"
+        "    if (transpose) {                         \n"
+        "        coord = vec2(uv.y, 1.0 - uv.x);      \n"
+        "    }                                        \n"
+        "    vec4 color_in = texture(tex, coord);     \n"
         "    color = vec4(color_in.rgb, 1);           \n"
         "}                                            \n";
 

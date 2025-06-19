@@ -337,7 +337,7 @@ static int cmucam_read_f_packet(int fd, struct cmucam_packet *packet) {
     if (packet->extended.data != NULL
             && packet->extended.capacity >= CMUCAM_PACKET_TYPE_F_NEXT_SIZE) {
         packet->extended.data[0] = rc;
-        packet->extended.length = CMUCAM_PACKET_TYPE_F_NEXT;
+        packet->extended.length = CMUCAM_PACKET_TYPE_F_NEXT_SIZE;
         return cmucam_read_bytes(fd, packet->extended.data + 1, CMUCAM_PACKET_TYPE_F_NEXT_SIZE - 1);
     }
 
