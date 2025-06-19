@@ -287,6 +287,49 @@ int cmucam_set_color_mode(int fd, bool yuv, bool auto_white_balance) {
     return cmucam_find_prompt(fd);
 }
 
+int cmucam_set_auto_exposure(int fd, bool on) {
+    const uint8_t autoexposure_mode = on ? 33 : 32;
+    const uint8_t cmucam_rcmd_set_autoexposure[] = { 'C', 'R', 2, 19, autoexposure_mode };
+
+    int rc = write(fd, cmucam_rcmd_set_autoexposure, sizeof cmucam_rcmd_set_autoexposure);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_set_autoexposure) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+    return cmucam_find_prompt(fd);
+}
+
+int cmucam_set_line_mode(int fd, bool on) {
+    const uint8_t cmucam_rcmd_set_linemode[] = { 'L', 'M', 1, on ? 1 : 0 };
+
+    int rc = write(fd, cmucam_rcmd_set_linemode, sizeof cmucam_rcmd_set_linemode);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_set_linemode) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+    return cmucam_find_prompt(fd);
+}
+
+int cmucam_set_noise_filter(int fd, bool on) {
+    const uint8_t cmucam_rcmd_set_noise_filter[] = { 'N', 'F', 1, on ? 1 : 0 };
+
+    int rc = write(fd, cmucam_rcmd_set_noise_filter, sizeof cmucam_rcmd_set_noise_filter);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_set_noise_filter) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+    return cmucam_find_prompt(fd);
+}
+
 int cmucam_dumpframe(int fd) {
     int rc = write(fd, cmucam_rcmd_dumpframe, sizeof cmucam_rcmd_dumpframe);
     if (rc < 0) {
@@ -384,6 +427,21 @@ int cmucam_track_window(int fd) {
         perror("failed to write to CMUcam");
         return rc;
     } else if(rc != sizeof cmucam_rcmd_track_window) {
+        fprintf(stderr, "failed to write all command bytes to CMUcam\n");
+        return -EIO;
+    }
+    return 0;
+}
+
+int cmucam_track_color(int fd, uint8_t rmin, uint8_t rmax, uint8_t gmin, uint8_t gmax,
+        uint8_t bmin, uint8_t bmax) {
+    const uint8_t cmucam_rcmd_track_color[] = { 'T', 'C', 6, rmin, rmax, gmin, gmax, bmin, bmax };
+
+    int rc = write(fd, cmucam_rcmd_track_color, sizeof cmucam_rcmd_track_color);
+    if (rc < 0) {
+        perror("failed to write to CMUcam");
+        return rc;
+    } else if(rc != sizeof cmucam_rcmd_track_color) {
         fprintf(stderr, "failed to write all command bytes to CMUcam\n");
         return -EIO;
     }

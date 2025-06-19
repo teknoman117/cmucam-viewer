@@ -217,15 +217,17 @@ int main(int argc, char** argv) {
     glClearColor(0, 0, 0, 1);
     glViewport(0, 0, width, height);
 
-    // Switch to YUV mode
-    rc = cmucam_set_color_mode(cmucam, true, false);
+    // Enable extended data
+    rc = cmucam_set_line_mode(cmucam, true);
     if (rc < 0) {
+        fprintf(stderr, "failed to enable cmucam line mode\n");
         return rc;
     }
 
-    // Render CMUcam frame dumps
+    // Start CMUcam frame dump
     rc = cmucam_dumpframe(cmucam);
     if (rc < 0) {
+        fprintf(stderr, "failed to start frame dump from CMUcam\n");
         return rc;
     }
 
@@ -236,6 +238,21 @@ int main(int argc, char** argv) {
     int drag_start_y = 0;
     int drag_stop_x = 0;
     int drag_stop_y = 0;
+
+    // CMUcam Color Parameters
+    int color_mode = 0;
+    bool auto_white_balance = false;
+    bool auto_exposure = true;
+    bool update_color_mode = false;
+    bool update_auto_exposure = false;
+
+    // CMUcam Tracking Parameters
+    bool noise_filter = true;
+    float tracking_color_min[3] = { 0.f, 0.f, 0.f };
+    float tracking_color_max[3] = { 1.f, 1.f, 1.f };
+    bool update_noise_filter = false;
+    bool update_tracking_colors = false;
+
     while (1) {
         // Fetch the next column from the camera
         uint8_t column_data[CMUCAM_IMAGE_HEIGHT * 3];
@@ -292,6 +309,41 @@ int main(int argc, char** argv) {
                 drag_finished = false;
             }
 
+            // update color mode or auto white balance settings if needed
+            if (update_color_mode) {
+                rc = cmucam_set_color_mode(cmucam, color_mode ? true : false, auto_white_balance);
+                if (rc < 0) {
+                    fprintf(stderr, "failed to set cmucam color mode\n");
+                    return rc;
+                }
+                update_color_mode = false;
+            }
+
+            // update auto exposure settings if needed
+            if (update_auto_exposure) {
+                rc = cmucam_set_auto_exposure(cmucam, auto_exposure);
+                if (rc < 0) {
+                    fprintf(stderr, "failed to set cmucam auto exposure mode\n");
+                    return rc;
+                }
+                update_auto_exposure = false;
+            }
+
+            // update noise filter settings if needed
+            if (update_noise_filter) {
+                rc = cmucam_set_noise_filter(cmucam, noise_filter);
+                if (rc < 0) {
+                    fprintf(stderr, "failed to set cmucam noise filter mode\n");
+                    return rc;
+                }
+                update_noise_filter = false;
+            }
+
+            // update tracking color settings if needed
+            if (update_tracking_colors) {
+                update_tracking_colors = false;
+            }
+
             rc = cmucam_dumpframe(cmucam);
             if (rc < 0) {
                 fprintf(stderr, "failed to start frame dump from CMUcam\n");
@@ -343,8 +395,25 @@ int main(int argc, char** argv) {
         ImGui_ImplSDL2_NewFrame();
         ImGui::NewFrame();
 
-        // TODO: Render the UI
-        ImGui::ShowDemoWindow();
+        // Render the UI
+        ImGui::Begin("CMUcam Controls", nullptr, ImGuiWindowFlags_NoCollapse);
+        if (ImGui::CollapsingHeader("Color Options", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Color Mode");
+            ImGui::SameLine();
+            update_color_mode |= ImGui::RadioButton("RGB", &color_mode, 0);
+            ImGui::SameLine();
+            update_color_mode |= ImGui::RadioButton("YUV", &color_mode, 1);
+            update_color_mode |= ImGui::Checkbox("Auto White Balance", &auto_white_balance);
+            update_auto_exposure |= ImGui::Checkbox("Auto Exposure", &auto_exposure);
+        }
+        if (ImGui::CollapsingHeader("Color Tracking", ImGuiTreeNodeFlags_DefaultOpen)) {
+            update_noise_filter |= ImGui::Checkbox("Noise Filtering", &noise_filter);
+            update_tracking_colors |= ImGui::ColorEdit3("Minimum", tracking_color_min,
+                    ImGuiColorEditFlags_DisplayRGB);
+            update_tracking_colors |= ImGui::ColorEdit3("Maximum", tracking_color_max,
+                    ImGuiColorEditFlags_DisplayRGB);
+        }
+        ImGui::End();
 
         // update texture
         //

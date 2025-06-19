@@ -53,6 +53,9 @@ int cmucam_open(const char* path);
 int cmucam_close(int fd);
 
 int cmucam_set_color_mode(int fd, bool yuv, bool auto_white_balance);
+int cmucam_set_auto_exposure(int fd, bool on);
+int cmucam_set_line_mode(int fd, bool on);
+int cmucam_set_noise_filter(int fd, bool on);
 
 int cmucam_dumpframe(int fd);
 int cmucam_dumpframe_next_column(int fd, uint8_t* column);
@@ -60,6 +63,9 @@ int cmucam_dumpframe_next_column(int fd, uint8_t* column);
 int cmucam_set_window(int fd, int x, int y, int x2, int y2);
 int cmucam_reset_window(int fd);
 int cmucam_track_window(int fd);
+
+int cmucam_track_color(int fd, uint8_t rmin, uint8_t rmax, uint8_t gmin, uint8_t gmax,
+        uint8_t bmin, uint8_t bmax);
 
 int cmucam_get_mean(int fd);
 
