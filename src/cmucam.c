@@ -248,11 +248,11 @@ static int cmucam_synchronize(int fd) {
     return cmucam_reset_asciimode(fd);
 }
 
-int cmucam_rawmode_enter(int fd) {
+static int cmucam_rawmode_enter(int fd) {
     return cmucam_command(fd, cmucam_acmd_rawmode_enter, sizeof cmucam_acmd_rawmode_enter);
 }
 
-int cmucam_rawmode_exit(int fd) {
+static int cmucam_rawmode_exit(int fd) {
     return cmucam_command(fd, cmucam_rcmd_rawmode_exit, sizeof cmucam_rcmd_rawmode_exit);
 }
 
@@ -289,59 +289,6 @@ int cmucam_set_noise_filter(int fd, bool on) {
     return cmucam_command(fd, cmucam_rcmd_set_noise_filter, sizeof cmucam_rcmd_set_noise_filter);
 }
 
-int cmucam_dumpframe(int fd) {
-    return cmucam_command_noprompt(fd, cmucam_rcmd_dumpframe, sizeof cmucam_rcmd_dumpframe);
-}
-
-int cmucam_dumpframe_next_column(int fd, uint8_t* column) {
-    int rc = cmucam_read_byte(fd);
-    if (rc < 0) {
-        return rc;
-    }
-
-    size_t received = 0;
-    if (rc == CMUCAM_DF_START_OF_FRAME) {
-        // start of frame, no action
-    } else if (rc == CMUCAM_DF_START_OF_COLUMN) {
-        // new column, but we have to check for end-of-frame sentinel in next byte
-        rc = cmucam_read_byte(fd);
-        if (rc < 0) {
-            return rc;
-        } else if (rc == CMUCAM_DF_END_OF_FRAME) {
-            rc = cmucam_find_prompt(fd);
-            if (rc < 0) {
-                return rc;
-            }
-            return 1;
-        } else {
-            column[0] = rc;
-            received = 1;
-        }
-    } else {
-        // we're out of sync with the camera
-        return -EIO;
-    }
-
-    // wait for the column from the camera
-    const size_t column_size = CMUCAM_IMAGE_HEIGHT * 3;
-    do {
-        rc = cmucam_await(fd, 1000);
-        if (rc < 0) {
-            perror("failed to read from CMUcam");
-            return rc;
-        }
-
-        rc = read(fd, column + received, column_size - received);
-        if (rc < 0) {
-            perror("failed to read from CMUcam");
-            return rc;
-        }
-
-        received += rc;
-    } while (received != column_size);
-    return 0;
-}
-
 int cmucam_set_window(int fd, int x, int y, int x2, int y2) {
     const uint8_t cmucam_rcmd_set_window[] = {
         'S', 'W', 4,
@@ -371,20 +318,8 @@ int cmucam_get_mean(int fd) {
     return cmucam_command_noprompt(fd, cmucam_rcmd_get_mean, sizeof cmucam_rcmd_get_mean);
 }
 
-static int cmucam_read_c_packet(int fd, struct cmucam_packet *packet) {
-    return cmucam_read_bytes(fd, (uint8_t *) &packet->c, sizeof packet->c);
-}
-
-static int cmucam_read_m_packet(int fd, struct cmucam_packet *packet) {
-    return cmucam_read_bytes(fd, (uint8_t *) &packet->m, sizeof packet->m);
-}
-
-static int cmucam_read_n_packet(int fd, struct cmucam_packet *packet) {
-    return cmucam_read_bytes(fd, (uint8_t *) &packet->n, sizeof packet->n);
-}
-
-static int cmucam_read_s_packet(int fd, struct cmucam_packet *packet) {
-    return cmucam_read_bytes(fd, (uint8_t *) &packet->s, sizeof packet->s);
+int cmucam_dump_frame(int fd) {
+    return cmucam_command_noprompt(fd, cmucam_rcmd_dumpframe, sizeof cmucam_rcmd_dumpframe);
 }
 
 static int cmucam_read_f_packet(int fd, struct cmucam_packet *packet) {
@@ -492,13 +427,13 @@ int cmucam_read_packet(int fd, struct cmucam_packet *packet) {
     packet->type = rc;
     switch (rc) {
         case CMUCAM_PACKET_TYPE_C:
-            return cmucam_read_c_packet(fd, packet);
+            return cmucam_read_bytes(fd, (uint8_t *) &packet->c, sizeof packet->c);
         case CMUCAM_PACKET_TYPE_M:
-            return cmucam_read_m_packet(fd, packet);
+            return cmucam_read_bytes(fd, (uint8_t *) &packet->m, sizeof packet->m);
         case CMUCAM_PACKET_TYPE_N:
-            return cmucam_read_n_packet(fd, packet);
+            return cmucam_read_bytes(fd, (uint8_t *) &packet->n, sizeof packet->n);
         case CMUCAM_PACKET_TYPE_S:
-            return cmucam_read_s_packet(fd, packet);
+            return cmucam_read_bytes(fd, (uint8_t *) &packet->s, sizeof packet->s);
         case CMUCAM_PACKET_TYPE_F_START:
         case CMUCAM_PACKET_TYPE_F_NEXT:
             return cmucam_read_f_packet(fd, packet);

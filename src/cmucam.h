@@ -124,20 +124,20 @@ int cmucam_set_auto_exposure(int fd, bool on);
 int cmucam_set_line_mode(int fd, bool on);
 int cmucam_set_noise_filter(int fd, bool on);
 
-int cmucam_dumpframe(int fd);
-int cmucam_dumpframe_next_column(int fd, uint8_t* column);
-
 int cmucam_set_window(int fd, int x, int y, int x2, int y2);
 int cmucam_reset_window(int fd);
-int cmucam_track_window(int fd);
 
+int cmucam_end_stream(int fd);
+
+int cmucam_track_window(int fd);
 int cmucam_track_color(int fd, uint8_t rmin, uint8_t rmax, uint8_t gmin, uint8_t gmax,
         uint8_t bmin, uint8_t bmax);
 
 int cmucam_get_mean(int fd);
 
+int cmucam_dump_frame(int fd);
+
 int cmucam_read_packet(int fd, struct cmucam_packet *packet);
-int cmucam_end_stream(int fd);
 
 #ifdef __cplusplus
 }

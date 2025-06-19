@@ -232,7 +232,7 @@ int main(int argc, char** argv) {
     }
 
     // Start CMUcam frame dump
-    rc = cmucam_dumpframe(cmucam);
+    rc = cmucam_dump_frame(cmucam);
     if (rc < 0) {
         fprintf(stderr, "failed to start frame dump from CMUcam\n");
         return rc;
@@ -275,69 +275,45 @@ int main(int argc, char** argv) {
 
     // Main loop
     while (1) {
-        // Fetch the next column from the camera
-        uint8_t column_data[CMUCAM_IMAGE_HEIGHT * 3];
-        rc = cmucam_dumpframe_next_column(cmucam, column_data);
-        if (rc < 0) {
-            fprintf(stderr, "failed to get next column from CMUcam: %d\n", rc);
-            return EXIT_FAILURE;
-        } else if (rc == 1) {
-            // End-of-frame: exit or begin the next frame
+        uint8_t extended[1024];
+        cmucam_packet packet;
+        packet.extended.data = extended;
+        packet.extended.capacity = sizeof extended;
+
+        // If the camera is active, receive a packet
+        if (camera_state != CMUcamState::Idle) {
+            rc = cmucam_read_packet(cmucam, &packet);
+            if (rc < 0) {
+                return rc;
+            }
+        }
+
+        // Do something with packet
+        switch (packet.type) {
+            case CMUCAM_PACKET_TYPE_F_START:
+                column = 0;
+            case CMUCAM_PACKET_TYPE_F_NEXT:
+                // update texture
+                //
+                // we store the texture rotated so that the column updates from the CMUcam are sent to
+                // OpenGL as row updates, which is generally more performant.
+                glTextureSubImage2D(frame, 0, 0, column++, CMUCAM_IMAGE_HEIGHT, 1, GL_RGB, GL_UNSIGNED_BYTE, extended);
+                break;
+            case CMUCAM_PACKET_TYPE_F_END:
+                // dump frame complete, return to idle state
+                if (camera_state == CMUcamState::Frame) {
+                    camera_state = CMUcamState::Idle;
+                }
+                break;
+            default:
+                printf("unimplemented packet type - %d", packet.type);
+                break;
+        }
+
+        // Update stuff when camera is idle
+        if (camera_state == CMUcamState::Idle) {
             if (quit) {
                 break;
-            }
-
-            // should we get the mean of a region
-            if (drag_finished) {
-                printf("setting window to: %d,%d -> %d,%d\n", drag_start_x, drag_start_y, drag_stop_x, drag_stop_y);
-                rc = cmucam_set_window(cmucam, drag_start_x, drag_start_y, drag_stop_x, drag_stop_y);
-                if (rc < 0) {
-                    fprintf(stderr, "failed to set window on camera\n");
-                    return rc;
-                }
-
-                rc = cmucam_get_mean(cmucam);
-                if (rc < 0) {
-                    fprintf(stderr, "failed to dump mean color of window\n");
-                    return rc;
-                }
-
-                // get 8 mean packets
-                for (int i = 0; i < 8; i++) {
-                    uint8_t extended[1024];
-                    cmucam_packet packet;
-                    packet.extended.data = extended;
-                    packet.extended.capacity = sizeof extended;
-                    rc = cmucam_read_packet(cmucam, &packet);
-                    if (rc < 0) {
-                        fprintf(stderr, "failed to read packet from the cmucam\n");
-                        return rc;
-                    }
-
-                    if (packet.type == CMUCAM_PACKET_TYPE_S) {
-                        printf("MEAN: Rmean: %d, Gmean: %d, Bmean: %d, Rdev: %d, Gdev: %d, Bdev: %d\n",
-                                packet.s.rmean, packet.s.gmean, packet.s.bmean,
-                                packet.s.rdeviation, packet.s.gdeviation, packet.s.bdeviation);
-                    } else if (packet.type == CMUCAM_PACKET_TYPE_LM_MEAN) {
-                        printf("GOT LM MEAN PACKET - %zu bytes\n", packet.extended.length);
-                    } else {
-                        printf("WAT\n");
-                    }
-                }
-
-                rc = cmucam_end_stream(cmucam);
-                if (rc < 0) {
-                    fprintf(stderr, "failed to stop cmucam data stream\n");
-                    return rc;
-                }
-
-                rc = cmucam_reset_window(cmucam);
-                if (rc < 0) {
-                    fprintf(stderr, "failed to reset cmucam window\n");
-                    return rc;
-                }
-
-                drag_finished = false;
             }
 
             // update color mode or auto white balance settings if needed
@@ -375,14 +351,14 @@ int main(int argc, char** argv) {
                 update_tracking_colors = false;
             }
 
-            rc = cmucam_dumpframe(cmucam);
-            if (rc < 0) {
-                fprintf(stderr, "failed to start frame dump from CMUcam\n");
-                return rc;
+            // restart frame dump if requested
+            if (dump_frame_continuous) {
+                rc = cmucam_dump_frame(cmucam);
+                if (rc < 0) {
+                    return rc;
+                }
+                camera_state = CMUcamState::Frame;
             }
-
-            column = 0;
-            continue;
         }
 
         // Process window events before we start making OpenGL calls
@@ -427,7 +403,7 @@ int main(int argc, char** argv) {
         ImGui::NewFrame();
 
         // Render the UI
-        ImGui::Begin("CMUcam Controls", nullptr, ImGuiWindowFlags_NoCollapse);
+        ImGui::Begin("CMUcam Controls");
         if (ImGui::CollapsingHeader("Options", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Text("Color Mode");
             ImGui::SameLine();
@@ -458,13 +434,6 @@ int main(int argc, char** argv) {
         }
         ImGui::End();
         ImGui::Render();
-
-        // update texture
-        //
-        // we store the texture rotated so that the column updates from the CMUcam are sent to
-        // OpenGL as row updates, which is generally more performant.
-        glTextureSubImage2D(frame, 0, 0, column, CMUCAM_IMAGE_HEIGHT, 1, GL_RGB, GL_UNSIGNED_BYTE, column_data);
-        column++;
 
         // draw camera data texture
         glClear(GL_COLOR_BUFFER_BIT);
