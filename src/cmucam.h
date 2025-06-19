@@ -30,6 +30,10 @@
 #ifndef CMUCAM_VIEWER_CMUCAM_H_
 #define CMUCAM_VIEWER_CMUCAM_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <inttypes.h>
 #include <stdbool.h>
 
@@ -61,5 +65,9 @@ int cmucam_get_mean(int fd);
 
 int cmucam_read_packet(int fd, uint8_t *packet, uint8_t n);
 int cmucam_end_stream(int fd);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CMUCAM_VIEWER_CMUCAM_H_ */

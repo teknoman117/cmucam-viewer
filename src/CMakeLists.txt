@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 
 add_executable(cmucam-viewer
-    main.c
+    main.cpp
     shaders.c
     cmucam.c
 )
