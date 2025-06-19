@@ -198,17 +198,40 @@ int main(int argc, char** argv) {
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-    GLuint frame;
+    struct {
+        GLuint frame;
+        GLuint mean;
+        GLuint track;
+    } textures;
+
     GLubyte black[3] = {0};
-    glGenTextures(1, &frame);
-    glBindTexture(GL_TEXTURE_2D, frame);
+    glGenTextures(3, (GLuint *) &textures);
+
+    glBindTexture(GL_TEXTURE_2D, textures.frame);
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB8, CMUCAM_IMAGE_HEIGHT, CMUCAM_IMAGE_WIDTH);
-    glClearTexSubImage(frame, 0, 0, 0, 0, CMUCAM_IMAGE_HEIGHT, CMUCAM_IMAGE_WIDTH, 1, GL_RGB, GL_UNSIGNED_BYTE, black);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glClearTexSubImage(GL_TEXTURE_2D, 0, 0, 0, 0, CMUCAM_IMAGE_HEIGHT, CMUCAM_IMAGE_WIDTH, 1,
+            GL_RGB, GL_UNSIGNED_BYTE, black);
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    glBindTexture(GL_TEXTURE_2D, textures.mean);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGB8, (CMUCAM_IMAGE_HEIGHT+1) / 2, 1);
+    glClearTexSubImage(GL_TEXTURE_2D, 0, 0, 0, 0, (CMUCAM_IMAGE_HEIGHT+1) / 2, 1, 1,
+            GL_RGB, GL_UNSIGNED_BYTE, black);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glBindTexture(GL_TEXTURE_2D, textures.track);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8, 80, 48);
+    glClearTexSubImage(GL_TEXTURE_2D, 0, 0, 0, 0, 80, 48, 1,
+            GL_RED, GL_UNSIGNED_BYTE, black);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    for (int i = 0; i < 3; i++) {
+        GLuint *tex = (GLuint *) &textures + i;
+        glTextureParameteri(*tex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureParameteri(*tex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(*tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(*tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
@@ -231,23 +254,11 @@ int main(int argc, char** argv) {
         return rc;
     }
 
-    // Start CMUcam frame dump
-    rc = cmucam_dump_frame(cmucam);
-    if (rc < 0) {
-        fprintf(stderr, "failed to start frame dump from CMUcam\n");
-        return rc;
-    }
-
-    GLuint column = 0;
+    // App State
+    auto camera_state = CMUcamState::Idle;
+    auto prior_state = camera_state;
     bool quit = false;
-    bool drag_finished = false;
-    int drag_start_x = 0;
-    int drag_start_y = 0;
-    int drag_stop_x = 0;
-    int drag_stop_y = 0;
-
-    // App
-    auto camera_state = CMUcamState::Frame;
+    int column = 0;
 
     // CMUcam Color Parameters
     int color_mode = 0;
@@ -280,6 +291,8 @@ int main(int argc, char** argv) {
         packet.extended.data = extended;
         packet.extended.capacity = sizeof extended;
 
+        bool resume_prior_state = false;
+
         // If the camera is active, receive a packet
         if (camera_state != CMUcamState::Idle) {
             rc = cmucam_read_packet(cmucam, &packet);
@@ -288,29 +301,59 @@ int main(int argc, char** argv) {
             }
         }
 
-        // Do something with packet
         switch (packet.type) {
             case CMUCAM_PACKET_TYPE_F_START:
                 column = 0;
             case CMUCAM_PACKET_TYPE_F_NEXT:
                 // update texture
                 //
-                // we store the texture rotated so that the column updates from the CMUcam are sent to
-                // OpenGL as row updates, which is generally more performant.
-                glTextureSubImage2D(frame, 0, 0, column++, CMUCAM_IMAGE_HEIGHT, 1, GL_RGB, GL_UNSIGNED_BYTE, extended);
+                // we store the texture rotated so that the column updates from the CMUcam are sent
+                // to OpenGL as row updates, which is generally more performant.
+                glTextureSubImage2D(textures.frame, 0, 0, column++, CMUCAM_IMAGE_HEIGHT, 1, GL_RGB,
+                        GL_UNSIGNED_BYTE, extended);
                 break;
             case CMUCAM_PACKET_TYPE_F_END:
                 // dump frame complete, return to idle state
                 if (camera_state == CMUcamState::Frame) {
+                    prior_state = camera_state;
                     camera_state = CMUcamState::Idle;
+                    resume_prior_state = dump_frame_continuous;
                 }
                 break;
+            case CMUCAM_PACKET_TYPE_S:
+                // mean color packet
+                mean_color[0] = (float) packet.s.rmean / 255.f;
+                mean_color[1] = (float) packet.s.gmean / 255.f;
+                mean_color[2] = (float) packet.s.bmean / 255.f;
+                mean_deviation[0] = (float) packet.s.rdeviation / 255.f;
+                mean_deviation[1] = (float) packet.s.gdeviation / 255.f;
+                mean_deviation[2] = (float) packet.s.bdeviation / 255.f;
+                break;
+
             default:
-                printf("unimplemented packet type - %d", packet.type);
+                printf("unimplemented packet type - %d\n", packet.type);
                 break;
         }
 
-        // Update stuff when camera is idle
+        // Return the camera to idle mode if changes requested (and is possible)
+        if ((camera_state != CMUcamState::Idle && camera_state != CMUcamState::Frame)
+                && (update_color_mode
+                || update_auto_exposure
+                || update_noise_filter
+                || update_tracking_colors
+                || dump_frame || mean || track || quit)) {
+            rc = cmucam_end_stream(cmucam);
+            if (rc < 0) {
+                fprintf(stderr, "failed to stop data streaming from cmucam\n");
+                return rc;
+            }
+
+            prior_state = camera_state;
+            camera_state = CMUcamState::Idle;
+            resume_prior_state = !(dump_frame || mean || track);
+        }
+
+        // If the camera is idle, update camera settings if changes requested
         if (camera_state == CMUcamState::Idle) {
             if (quit) {
                 break;
@@ -351,13 +394,37 @@ int main(int argc, char** argv) {
                 update_tracking_colors = false;
             }
 
-            // restart frame dump if requested
-            if (dump_frame_continuous) {
+            // since we're idle, check if we should enter a new state
+            if (dump_frame || (resume_prior_state && prior_state == CMUcamState::Frame)) {
                 rc = cmucam_dump_frame(cmucam);
                 if (rc < 0) {
                     return rc;
                 }
+
+                prior_state = camera_state;
                 camera_state = CMUcamState::Frame;
+            } else if (mean || (resume_prior_state && prior_state == CMUcamState::Mean)) {
+                rc = cmucam_get_mean(cmucam);
+                if (rc < 0) {
+                    return rc;
+                }
+
+                prior_state = camera_state;
+                camera_state = CMUcamState::Mean;
+            } else if (track || (resume_prior_state && prior_state == CMUcamState::Tracking)) {
+                rc = cmucam_track_color(cmucam,
+                        (float) tracking_color_min[0] / 255.f,
+                        (float) tracking_color_max[0] / 255.f,
+                        (float) tracking_color_min[1] / 255.f,
+                        (float) tracking_color_max[1] / 255.f,
+                        (float) tracking_color_min[2] / 255.f,
+                        (float) tracking_color_max[2] / 255.f);
+                if (rc < 0) {
+                    return rc;
+                }
+
+                prior_state = camera_state;
+                camera_state = CMUcamState::Mean;
             }
         }
 
@@ -375,25 +442,14 @@ int main(int argc, char** argv) {
                 }
             } else if (event.type == SDL_MOUSEBUTTONDOWN && !io.WantCaptureMouse) {
                 // scale click into CMUcam coordinates
-                float x = event.button.x;
-                float y = event.button.y;
+                int x = event.button.x;
+                int y = event.button.y;
                 x = (x < 0) ? 0 : (x >= width) ? width - 1 : x;
                 y = (y < 0) ? 0 : (y >= height) ? height - 1 : y;
                 x *= ((float) CMUCAM_IMAGE_WIDTH) / ((float) width);
                 y *= ((float) CMUCAM_IMAGE_HEIGHT) / ((float) height);
-                drag_start_x = (x < 1.f) ? 1.f : (x > CMUCAM_IMAGE_WIDTH) ? CMUCAM_IMAGE_WIDTH : x;
-                drag_start_y = (y < 1.f) ? 1.f : (y > CMUCAM_IMAGE_HEIGHT) ? CMUCAM_IMAGE_HEIGHT : y;
-            } else if (event.type == SDL_MOUSEBUTTONUP && !io.WantCaptureMouse) {
-                // scale click into CMUcam coordinates
-                float x = event.button.x;
-                float y = event.button.y;
-                x = (x < 0) ? 0 : (x >= width) ? width - 1 : x;
-                y = (y < 0) ? 0 : (y >= height) ? height - 1 : y;
-                x *= ((float) CMUCAM_IMAGE_WIDTH) / ((float) width);
-                y *= ((float) CMUCAM_IMAGE_HEIGHT) / ((float) height);
-                drag_stop_x = (x < 1.f) ? 1.f : (x > CMUCAM_IMAGE_WIDTH) ? CMUCAM_IMAGE_WIDTH : x;
-                drag_stop_y = (y < 1.f) ? 1.f : (y > CMUCAM_IMAGE_HEIGHT) ? CMUCAM_IMAGE_HEIGHT : y;
-                drag_finished = true;
+                x = (x < 1.f) ? 1.f : (x > CMUCAM_IMAGE_WIDTH) ? CMUCAM_IMAGE_WIDTH : x;
+                y = (y < 1.f) ? 1.f : (y > CMUCAM_IMAGE_HEIGHT) ? CMUCAM_IMAGE_HEIGHT : y;
             }
         }
 
@@ -422,14 +478,14 @@ int main(int argc, char** argv) {
             track = ImGui::Button("Track");
         }
         if (ImGui::CollapsingHeader("Mean", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::ColorEdit3("Mean Color", mean_color, ImGuiColorEditFlags_NoPicker | ImGuiColorEditFlags_NoLabel);
             mean = ImGui::Button("Get Mean");
         }
         if (ImGui::CollapsingHeader("Frame Dump", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Continuous", &dump_frame_continuous);
+            dump_frame = ImGui::Button("Dump");
             if (camera_state == CMUcamState::Frame) {
                 ImGui::Text("Dumping Column: %d", column);
-            } else {
-                dump_frame = ImGui::Button("Dump");
             }
         }
         ImGui::End();
@@ -438,7 +494,7 @@ int main(int argc, char** argv) {
         // draw camera data texture
         glClear(GL_COLOR_BUFFER_BIT);
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, frame);
+        glBindTexture(GL_TEXTURE_2D, textures.frame);
         glUseProgram(quad_shader_prog);
         glUniform1i(0, 0);
         glBindVertexArray(quadVAO);
