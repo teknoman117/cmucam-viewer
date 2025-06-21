@@ -270,8 +270,12 @@ int main(int argc, char** argv) {
     int color_mode = 0;
     bool auto_white_balance = false;
     bool auto_exposure = true;
+    int brightness = 100;
+    int constrast = 100;
     bool update_color_mode = false;
     bool update_auto_exposure = false;
+    bool update_brightness = false;
+    bool update_contrast = false;
 
     // CMUcam Tracking Parameters
     bool noise_filter = true;
@@ -393,6 +397,8 @@ int main(int argc, char** argv) {
         if ((camera_state != CMUcamState::Idle && camera_state != CMUcamState::Frame)
                 && (update_color_mode
                 || update_auto_exposure
+                || update_brightness
+                || update_contrast
                 || update_noise_filter
                 || update_tracking_colors
                 || dump_frame || mean || track || quit)) {
@@ -431,6 +437,26 @@ int main(int argc, char** argv) {
                     return rc;
                 }
                 update_auto_exposure = false;
+            }
+
+            // update brightness settings if needed
+            if (update_brightness) {
+                rc = cmucam_set_brightness(cmucam, brightness);
+                if (rc < 0) {
+                    fprintf(stderr, "failed to set cmucam brightness\n");
+                    return rc;
+                }
+                update_brightness = false;
+            }
+
+            // update contrast settings if needed
+            if (update_contrast) {
+                rc = cmucam_set_contrast(cmucam, constrast);
+                if (rc < 0) {
+                    fprintf(stderr, "failed to set cmucam contrast\n");
+                    return rc;
+                }
+                update_contrast = false;
             }
 
             // update noise filter settings if needed
@@ -534,6 +560,8 @@ int main(int argc, char** argv) {
             update_color_mode |= ImGui::RadioButton("YUV", &color_mode, 1);
             update_color_mode |= ImGui::Checkbox("Auto White Balance", &auto_white_balance);
             update_auto_exposure |= ImGui::Checkbox("Auto Exposure", &auto_exposure);
+            update_brightness |= ImGui::SliderInt("Brightness", &brightness, 0, 255);
+            update_contrast |= ImGui::SliderInt("Contrast", &constrast, 0, 255);
         }
         if (ImGui::CollapsingHeader("Tracking", ImGuiTreeNodeFlags_DefaultOpen)) {
             update_noise_filter |= ImGui::Checkbox("Noise Filtering", &noise_filter);

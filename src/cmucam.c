@@ -277,6 +277,18 @@ int cmucam_set_auto_exposure(int fd, bool on) {
     return cmucam_command(fd, cmucam_rcmd_set_autoexposure, sizeof cmucam_rcmd_set_autoexposure);
 }
 
+int cmucam_set_brightness(int fd, uint8_t brightness) {
+    const uint8_t cmucam_rcmd_set_brightness[] = { 'C', 'R', 2, 6, brightness };
+
+    return cmucam_command(fd, cmucam_rcmd_set_brightness, sizeof cmucam_rcmd_set_brightness);
+}
+
+int cmucam_set_contrast(int fd, uint8_t contrast) {
+    const uint8_t cmucam_rcmd_set_contrast[] = { 'C', 'R', 2, 5, contrast };
+
+    return cmucam_command(fd, cmucam_rcmd_set_contrast, sizeof cmucam_rcmd_set_contrast);
+}
+
 int cmucam_set_line_mode(int fd, bool on) {
     const uint8_t cmucam_rcmd_set_linemode[] = { 'L', 'M', 1, on ? 1 : 0 };
 

@@ -121,6 +121,8 @@ int cmucam_close(int fd);
 
 int cmucam_set_color_mode(int fd, bool yuv, bool auto_white_balance);
 int cmucam_set_auto_exposure(int fd, bool on);
+int cmucam_set_brightness(int fd, uint8_t brightness);
+int cmucam_set_contrast(int fd, uint8_t contrast);
 int cmucam_set_line_mode(int fd, bool on);
 int cmucam_set_noise_filter(int fd, bool on);
 
