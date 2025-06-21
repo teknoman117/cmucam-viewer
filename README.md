@@ -24,6 +24,8 @@ build/Release/src/cmucam-viewer -d <path to CMUcam tty>
 
 ### Live Frame Dump
 
+In glorius subsampled 160x143 over a 115.2 kb/s serial link
+
 ![Live Frame Dump](/assets/cmucam-viewer-00.gif)
 
 ### "Line Mode" Extended Data
@@ -44,7 +46,7 @@ It started with a conversion at an HBRC meeting about "retro" homebrew robotics,
 
 The 20+ year old Java viewer for the CMUcam wasn't able to get past opening a serial port. It's interesting from a historical standpoint - it predates the Java serial port libraries like RXTX (which itself has been dead for 10 years). It just uses the serial ports via a FileStream and relies on an external program to set up the serial port correctly. Either way, I don't think I ever wrote a frame dumper for it in the 20+ years I've had it, or made use of the extended tracking data offered by "Line Mode".
 
-I decided to see how difficult it would be to build an HBRC tablebot based on a CMUcam v1 and a Basic Stamp 2sx. Excluding the 3D printed components and the tilt servo, everything on here I've had for at least 20 years. This application is used to calibrate the color tracking parameters.
+I decided to see how difficult it would be to build a HBRC tablebot based on a CMUcam v1 and a Basic Stamp 2sx. Excluding the 3D printed components and the tilt servo, everything on here I've had for at least 20 years. This application is used to calibrate the color tracking parameters.
 
 Cue forgetting how temperamental, noisy, grainy, and low dynamic range these early CMOS image sensors were...
 
