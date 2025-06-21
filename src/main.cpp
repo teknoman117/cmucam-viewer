@@ -55,6 +55,7 @@ enum class CMUcamState {
 
 const char *cmucam_path = "/dev/ttyUSB0";
 unsigned int window_scale = 1;
+bool skip_init = false;
 
 void show_help(const char* executable_path) {
     fprintf(stderr, "Usage: %s [FLAGS] [OPTIONS] \n", executable_path);
@@ -66,6 +67,7 @@ void show_help(const char* executable_path) {
     fprintf(stderr, "OPTIONS:\n");
     fprintf(stderr, "\t-d, --device <path>\t\tSet the path to the CMUcam device [default: /dev/ttyUSB0]\n");
     fprintf(stderr, "\t-s, --scale <scale>\t\tSet the window size to a multiple of the actual size [default: 1]\n");
+    fprintf(stderr, "\t-n, --no-init\t\tAssume the camera is already initialized\n");
     fprintf(stderr, "\n");
 }
 
@@ -76,15 +78,19 @@ int process_options(int argc, char** argv) {
         {"device", required_argument, 0, 'd'},
         {"scale", required_argument, 0, 's'},
         {"help", no_argument, 0, 'h'},
+        {"no-init", no_argument, 0, 'n'},
         {0, 0, 0, 0}
     };
 
     int rc = 0;
     int index = 0;
-    while ((rc = getopt_long(argc, argv, "d:s:h", options, &index)) != -1) {
+    while ((rc = getopt_long(argc, argv, "d:s:hn", options, &index)) != -1) {
         switch (rc) {
             case 'd':
                 cmucam_path = optarg;
+                break;
+            case 'n':
+                skip_init = true;
                 break;
             case 's':
                 if (sscanf(optarg, "%u", &window_scale) == EOF) {
@@ -114,7 +120,7 @@ int main(int argc, char** argv) {
         return rc;
     }
 
-    int cmucam = cmucam_open(cmucam_path);
+    int cmucam = cmucam_open(cmucam_path, skip_init);
     if (cmucam < 0) {
         fprintf(stderr, "Failed to open CMUcam: %d\n", cmucam);
         return EXIT_FAILURE;

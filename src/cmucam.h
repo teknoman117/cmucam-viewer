@@ -116,7 +116,7 @@ struct cmucam_packet {
 
 int cmucam_initialize();
 
-int cmucam_open(const char* path);
+int cmucam_open(const char* path, bool skip_init);
 int cmucam_close(int fd);
 
 int cmucam_set_color_mode(int fd, bool yuv, bool auto_white_balance);

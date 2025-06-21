@@ -500,7 +500,7 @@ static int cmucam_open_port(const char* path) {
     return fd;
 }
 
-int cmucam_open(const char* path) {
+int cmucam_open(const char* path, bool skip_init) {
     int fd = cmucam_open_port(path);
     if (fd < 0) {
         return fd;
@@ -517,14 +517,28 @@ int cmucam_open(const char* path) {
         return rc;
     }
 
-    rc = cmucam_synchronize(fd);
-    if (rc < 0) {
-        return rc;
-    }
+    if (skip_init) {
+        // assume the camera is initialized, so send a ping to end any stream and quiesce
+        rc = cmucam_command(fd, cmucam_cmd_ping, sizeof cmucam_cmd_ping);
+        if (rc < 0) {
+            return rc;
+        }
 
-    rc = cmucam_rawmode_enter(fd);
-    if (rc < 0) {
-        return rc;
+        rc = cmucam_quiesce(fd);
+        if (rc < 0) {
+            return rc;
+        }
+    } else {
+        // initialize camera
+        rc = cmucam_synchronize(fd);
+        if (rc < 0) {
+            return rc;
+        }
+
+        rc = cmucam_rawmode_enter(fd);
+        if (rc < 0) {
+            return rc;
+        }
     }
 
     return fd;
