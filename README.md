@@ -1,18 +1,17 @@
-cmucam-viewer
-=============
+# cmucam-viewer
 
 A simple SDL2 application for interacting with a CMUcam v1
 
 [https://www.cs.cmu.edu/~cmucam/downloads.html].
 
-Dependencies
-------------
+## Dependencies
+
 - SDL2
 - GLEW
 - OpenGL
 
-Building
---------
+## Building
+
 ```
 git clone --recurse-submodules https://github.com/teknoman117/cmucam-viewer
 cd cmucam-viewer
@@ -21,8 +20,13 @@ cmake --build build/Release -j
 build/Release/src/cmucam-viewer -d <path to CMUcam tty>
 ```
 
-Screenshots
------------
+## Demos
+
+### Live Frame Dump
+
+![Live Frame Dump](/assets/cmucam-viewer-00.gif)
+
+### "Line Mode" Extended Data
 
 | Frame Dump | Tracking the Blue Block |
 | ---------- | ----------------------- |
@@ -32,8 +36,8 @@ Screenshots
 | ---------- | --------------------------------- |
 | ![Frame Dump 2](assets/cmucam-viewer-03.png) | ![Mean Mode](assets/cmucam-viewer-04.png) |
 
-Inspiration
------------
+## Inspiration
+
 So why does one write a CMUcam 1 viewer in ~~2022~~ 2025?
 
 It started with a conversion at an HBRC meeting about "retro" homebrew robotics, which led me to revive some of my childhood robotics gear: Basic Stamps, a CMUcam v1, Sharp IR distance sensors, etc.
